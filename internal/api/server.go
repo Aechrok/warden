@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 	"go.uber.org/zap"
 
 	"github.com/aechrok/warden/internal/auth"
@@ -65,6 +67,16 @@ func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logg
 	registry := plugin.NewRegistry()
 	resolver := plugin.NewCredentialResolver(pool, cfg.EncryptionKey)
 	dispatcher := plugin.NewDispatcher(registry, resolver, pool)
+
+	// Install River's own schema (river_job, river_queue, river_leader, etc.)
+	// before constructing the client. Idempotent — safe to call on every boot.
+	riverMigrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	if err != nil {
+		return nil, fmt.Errorf("api: river migrator: %w", err)
+	}
+	if _, err := riverMigrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return nil, fmt.Errorf("api: river migrate up: %w", err)
+	}
 
 	holdSvc := legalhold.NewService(pool, eventStore, outboxStore, registry)
 	riverClient, err := holdSvc.NewRiverClient()

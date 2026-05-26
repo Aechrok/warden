@@ -1,15 +1,15 @@
-// Command server is the Warden control-plane HTTP/gRPC server entry point.
-// At this stage it bootstraps configuration, opens the database pool, runs
-// migrations, and blocks waiting for a termination signal. Subsequent agents
-// will mount the API surfaces and background workers onto this scaffold.
+// Command server is the Warden control-plane HTTP server entry point.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/aechrok/warden/internal/api"
 	"github.com/aechrok/warden/internal/config"
 	"github.com/aechrok/warden/internal/rbac"
 
@@ -35,7 +36,6 @@ const migrationsSource = "file://internal/db/migrations"
 func main() {
 	logger, err := zap.NewProduction()
 	if err != nil {
-		// At this point we cannot log via zap; fall back to stderr exit.
 		os.Stderr.WriteString("warden: failed to construct logger: " + err.Error() + "\n")
 		os.Exit(1)
 	}
@@ -57,28 +57,50 @@ func run(logger *zap.Logger) error {
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("open db pool: %w", err)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		return err
+		return fmt.Errorf("db ping: %w", err)
 	}
 
 	if err := runMigrations(cfg.DatabaseURL); err != nil {
-		return err
+		return fmt.Errorf("migrations: %w", err)
 	}
 	logger.Info("warden: migrations complete")
 
 	if err := rbac.NewSeeder().Seed(ctx, pool); err != nil {
-		return err
+		return fmt.Errorf("rbac seed: %w", err)
 	}
 	logger.Info("warden: built-in roles seeded")
 
-	logger.Info("warden: ready", zap.Int("port", cfg.ServerPort))
+	srv, err := api.NewServer(ctx, pool, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("api server init: %w", err)
+	}
+
+	httpSrv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.ServerPort),
+		Handler: srv.Handler(),
+	}
+
+	go func() {
+		logger.Info("warden: listening", zap.Int("port", cfg.ServerPort))
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("warden: http server error", zap.Error(err))
+		}
+	}()
 
 	<-ctx.Done()
 	logger.Info("warden: shutdown signal received")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("warden: graceful shutdown error", zap.Error(err))
+	}
+	logger.Info("warden: shutdown complete")
 	return nil
 }
 

@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // DayOfWeekConfig configures the DayOfWeek policy. AllowedDays lists weekday
@@ -22,12 +22,12 @@ type DayOfWeek struct {
 func (DayOfWeek) Name() string { return "day_of_week" }
 
 // Evaluate implements pbac.Policy.
-func (p DayOfWeek) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p DayOfWeek) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	today := int(ec.Now.Weekday())
 	for _, d := range p.Config.AllowedDays {
 		if d == today {
-			return pbac.Allow
+			return pbactypes.Allow
 		}
 	}
-	return pbac.Deny
+	return pbactypes.Deny
 }

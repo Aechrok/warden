@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // ConcurrentSessionLimitConfig configures the ConcurrentSessionLimit policy.
@@ -24,12 +24,12 @@ type ConcurrentSessionLimit struct {
 func (ConcurrentSessionLimit) Name() string { return "concurrent_session_limit" }
 
 // Evaluate implements pbac.Policy.
-func (p ConcurrentSessionLimit) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p ConcurrentSessionLimit) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if p.Config.MaxSessions <= 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if ec.SessionCount > p.Config.MaxSessions {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

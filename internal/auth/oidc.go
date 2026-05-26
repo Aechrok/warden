@@ -96,11 +96,12 @@ func (p *Provider) AuthURL(state, nonce string) string {
 	if p == nil || p.rp == nil {
 		return ""
 	}
-	opts := []rp.URLParamOpt{}
+	var authOpts []rp.AuthURLOpt
 	if nonce != "" {
-		opts = append(opts, rp.WithURLParam("nonce", nonce))
+		param := rp.WithURLParam("nonce", nonce)
+		authOpts = append(authOpts, rp.AuthURLOpt(param))
 	}
-	return rp.AuthURL(state, p.rp, opts...)
+	return rp.AuthURL(state, p.rp, authOpts...)
 }
 
 // RedirectURL returns the configured callback URL.
@@ -136,15 +137,15 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*To
 	}
 
 	claims := tokens.IDTokenClaims
-	email := strings.TrimSpace(claims.GetEmail())
+	email := strings.TrimSpace(claims.Email)
 	if email == "" {
 		return nil, errors.New("auth: ID token missing email claim")
 	}
 
-	name := strings.TrimSpace(claims.GetName())
+	name := strings.TrimSpace(claims.Name)
 	if name == "" {
 		// Fall back to the preferred username, then to the local-part of email.
-		if pu := claims.GetPreferredUsername(); pu != "" {
+		if pu := claims.PreferredUsername; pu != "" {
 			name = pu
 		} else if at := strings.IndexByte(email, '@'); at > 0 {
 			name = email[:at]
@@ -153,7 +154,7 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*To
 		}
 	}
 
-	subject := strings.TrimSpace(claims.GetSubject())
+	subject := strings.TrimSpace(claims.Subject)
 	if subject == "" {
 		return nil, errors.New("auth: ID token missing subject claim")
 	}

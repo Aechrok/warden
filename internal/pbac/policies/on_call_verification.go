@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // OnCallVerificationConfig configures the OnCallVerification policy.
@@ -25,17 +25,17 @@ type OnCallVerification struct {
 func (OnCallVerification) Name() string { return "on_call_verification" }
 
 // Evaluate implements pbac.Policy.
-func (p OnCallVerification) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p OnCallVerification) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if len(p.Config.RequiredFor) == 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if !matchesAnyPattern(p.Config.RequiredFor, ec.ActionKey) {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if ec.OnCall {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
-	return pbac.Deny
+	return pbactypes.Deny
 }
 
 func matchesAnyPattern(patterns []string, s string) bool {

@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Agent 4
+Last updated by: Agent 5
 
 ---
 
@@ -75,7 +75,7 @@ Last updated by: Agent 4
 - [x] Default policy set (vip_protection, production_instance_gate, change_freeze_window, step_up_mfa)
 - [x] `internal/breakglass/` — reason capture, execution, event emission, incident record, admin notification hook
 - [x] SCIM 2.0 handlers (Users + Groups, group-to-role mapping)
-- [ ] Middleware: session auth, token auth, RBAC check, PBAC check, rate limiting — Agent 5 (API layer)
+- [x] Middleware: session auth, token auth, RBAC check, PBAC check, rate limiting — Agent 5 (API layer)
 
 ---
 
@@ -112,28 +112,29 @@ Last updated by: Agent 4
 ## Agent 5 — API Layer
 > Owns: protobuf definitions, connect-go server, internal API, public API, approval workflow
 
-- [ ] `proto/` — IdentityService, ActionService, HoldService, AuditService, ApprovalService, AdminService, AssistantService
-- [ ] Generated connect-go stubs (`buf generate`)
-- [ ] `internal/api/router.go` — mounts both surfaces under path prefixes
-- [ ] `internal/api/middleware/` — shared + surface-specific middleware
-- [ ] **Internal API** (`/api/v1/internal/*`) — session-auth, all endpoints
-  - [ ] Auth: login, callback, logout
-  - [ ] `/me` — current user + permissions
-  - [ ] Identity: search, lookup, cache refresh
-  - [ ] Actions: execute with RBAC + PBAC gate
-  - [ ] Holds: full lifecycle + cascade status
-  - [ ] Audit: query + export (JSON/CSV)
-  - [ ] Approvals: list, approve, reject
-  - [ ] Break-glass: invoke + incident list
-  - [ ] Tokens: CRUD
-  - [ ] Admin: instances, roles, SCIM mappings, hold templates, PBAC policies
-  - [ ] Assistant: Claude tool-use SSE stream
-- [ ] **Public API** (`/api/v1/public/*`) — bearer token auth, scoped endpoints
-  - [ ] Actions: execute (scope checked first)
-  - [ ] Holds: CRUD
-  - [ ] Audit: read-only query
-  - [ ] Identities: read-only search
-- [ ] OpenAPI docs generated from proto (one spec per surface)
+- [ ] `proto/` — IdentityService, ActionService, HoldService, AuditService, ApprovalService, AdminService, AssistantService (deferred; connect-go deferred)
+- [ ] Generated connect-go stubs (`buf generate`) — deferred
+- [x] `internal/api/router.go` — mounts both surfaces under path prefixes (stdlib net/http.ServeMux)
+- [x] `internal/api/server.go` — Server struct, NewServer constructor, all service wiring
+- [x] `internal/api/middleware/` — session auth, token auth, RBAC, PBAC, rate limiting
+- [x] **Internal API** (`/api/v1/internal/*`) — session-auth, all endpoints
+  - [x] Auth: login, callback, logout
+  - [x] `/me` — current user + permissions
+  - [x] Identity: search, lookup, cache refresh
+  - [x] Actions: execute with RBAC + PBAC gate
+  - [x] Holds: full lifecycle + cascade status
+  - [x] Audit: query + export (JSON/CSV)
+  - [x] Approvals: list, approve, reject
+  - [x] Break-glass: invoke + incident list
+  - [x] Tokens: CRUD
+  - [x] Admin: instances, roles, SCIM mappings, hold templates, PBAC policies, VIP identities
+  - [x] Assistant: Claude tool-use SSE stream (stub)
+- [x] **Public API** (`/api/v1/public/*`) — bearer token auth, scoped endpoints
+  - [x] Actions: execute (scope checked first)
+  - [x] Holds: CRUD
+  - [x] Audit: read-only query
+  - [x] Identities: read-only search
+- [ ] OpenAPI docs generated from proto (one spec per surface) — deferred
 
 ---
 

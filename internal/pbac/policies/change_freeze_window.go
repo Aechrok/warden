@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // FreezeWindow is one closed-open interval [Start, End) during which the
@@ -34,17 +34,17 @@ type ChangeFreezeWindow struct {
 func (ChangeFreezeWindow) Name() string { return "change_freeze_window" }
 
 // Evaluate implements pbac.Policy.
-func (p ChangeFreezeWindow) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p ChangeFreezeWindow) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if p.Config.AppliesToDestructiveOnly && !ec.Destructive {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	for _, w := range p.Config.Windows {
 		if w.Start.IsZero() || w.End.IsZero() {
 			continue
 		}
 		if !ec.Now.Before(w.Start) && ec.Now.Before(w.End) {
-			return pbac.Deny
+			return pbactypes.Deny
 		}
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

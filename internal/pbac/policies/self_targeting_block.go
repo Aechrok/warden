@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // SelfTargetingBlock denies any action where the acting operator is also
@@ -16,9 +16,9 @@ type SelfTargetingBlock struct{}
 func (SelfTargetingBlock) Name() string { return "self_targeting_block" }
 
 // Evaluate implements pbac.Policy.
-func (SelfTargetingBlock) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (SelfTargetingBlock) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.TargetIsSelf {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

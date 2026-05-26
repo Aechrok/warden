@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // VIPProtection requires approval for any action whose target is flagged as
@@ -16,9 +16,9 @@ type VIPProtection struct{}
 func (VIPProtection) Name() string { return "vip_protection" }
 
 // Evaluate implements pbac.Policy.
-func (VIPProtection) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (VIPProtection) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.TargetIsVIP {
-		return pbac.RequireApproval
+		return pbactypes.RequireApproval
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

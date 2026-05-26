@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // TimeOfDayConfig configures the TimeOfDay policy. StartHour and EndHour are
@@ -30,19 +30,19 @@ type TimeOfDay struct {
 func (TimeOfDay) Name() string { return "time_of_day" }
 
 // Evaluate implements pbac.Policy.
-func (p TimeOfDay) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p TimeOfDay) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if p.Config.ApplyToDestructiveOnly && !ec.Destructive {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	hour := ec.Now.Hour()
 	start, end := normalizeHour(p.Config.StartHour), normalizeHour(p.Config.EndHour)
 	if inHourWindow(hour, start, end) {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if p.Config.RequireApprovalOutside {
-		return pbac.RequireApproval
+		return pbactypes.RequireApproval
 	}
-	return pbac.Deny
+	return pbactypes.Deny
 }
 
 // normalizeHour clamps an hour into 0..23 by modulo. Negative values wrap.

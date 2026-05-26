@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // StepUpMFAConfig configures the StepUpMFA policy. MaxSessionAgeMinutes is
@@ -26,16 +26,16 @@ type StepUpMFA struct {
 func (StepUpMFA) Name() string { return "step_up_mfa" }
 
 // Evaluate implements pbac.Policy.
-func (p StepUpMFA) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p StepUpMFA) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if !ec.Destructive {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if p.Config.MaxSessionAgeMinutes <= 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	threshold := time.Duration(p.Config.MaxSessionAgeMinutes) * time.Minute
 	if ec.SessionAge > threshold {
-		return pbac.RequireApproval
+		return pbactypes.RequireApproval
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

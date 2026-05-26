@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // IntegrationHealthCheck denies destructive actions against an integration
@@ -15,12 +15,12 @@ type IntegrationHealthCheck struct{}
 func (IntegrationHealthCheck) Name() string { return "integration_health_check" }
 
 // Evaluate implements pbac.Policy.
-func (IntegrationHealthCheck) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (IntegrationHealthCheck) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if !ec.Destructive {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if !ec.IntegrationHealthy {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

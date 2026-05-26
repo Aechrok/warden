@@ -467,6 +467,120 @@ Warden exposes two fully separate API surfaces mounted at different path prefixe
 
 ---
 
+### Agent 8: Code Review, Coverage, and End-to-End Testing
+
+**Owns:** Aggressive code review across all agent output, enforcing coverage thresholds, and a full end-to-end test suite covering every critical flow.
+
+**This agent reads every file written by Agents 1–7 and treats nothing as given.** It does not just add tests — it audits, fixes, and hardens.
+
+**Code Review Pass**
+
+Agent 8 performs a full read of every package and flags or fixes:
+- Auth bypass vectors — session validation gaps, token scope enforcement gaps, missing RBAC checks on any handler
+- PBAC enforcement gaps — actions that execute without going through the PBAC engine
+- Missing error handling at system boundaries (external API calls, DB writes, job enqueue)
+- Race conditions — shared state accessed without synchronization, River job workers modifying shared maps
+- Incorrect event sourcing usage — state changes that don't emit events, version conflicts not handled
+- Cascade correctness — `CascadeRemoveJob` must check other active holds before removing external hold
+- SQL injection surface — any raw query construction (sqlc should prevent this but verify)
+- Credential leakage — credentials logged, included in error messages, or returned in API responses
+- Goroutine leaks — any `go func()` without a done channel or context cancellation path
+- Plugin contract violations — plugins that return wrong error types, ignore context cancellation, or aren't idempotent on hold operations
+
+All findings are either fixed inline or documented as GitHub issues on the repo.
+
+**Coverage Enforcement**
+
+Target thresholds (enforced in CI via `go test -coverprofile`):
+- `internal/rbac/` — 90% minimum
+- `internal/pbac/` — 90% minimum (each policy must have at least one allow and one deny test case)
+- `internal/legalhold/` — 85% minimum
+- `internal/auth/` — 85% minimum
+- `internal/store/` — 90% minimum (event store optimistic concurrency path must be tested)
+- `plugins/*` — 75% minimum per plugin (mock HTTP server required for each)
+- Overall project — 80% minimum
+
+Agent 8 writes missing tests to hit thresholds. Tests use real Postgres via `testcontainers-go` (not mocks) for anything touching the DB.
+
+Add `github.com/testcontainers/testcontainers-go` to `go.mod`.
+
+**End-to-End Test Suite (`e2e/`)**
+
+All E2E tests spin up a full Warden stack (Postgres + Dex OIDC + Warden server) using `testcontainers-go`. They run against the real binary, not mocked internals.
+
+Required test scenarios:
+
+*Hold Cascade Durability*
+- Place a hold on a custodian with 3 providers configured
+- Kill the server mid-cascade (after job 1 completes, before job 2)
+- Restart the server
+- Assert: River resumes, all 3 providers eventually reach `completed` cascade state
+- Assert: `hold.cascade_completed` event is emitted after all jobs finish
+
+*PBAC Default Policy Enforcement*
+- Configure `change_freeze_window` policy with a window that covers the current time
+- Attempt a destructive action
+- Assert: HTTP 403 with `policy: change_freeze_window` in response
+- Attempt same action with break-glass
+- Assert: succeeds; `breakglass.used` event emitted; incident row created
+
+*Approval Workflow*
+- Configure an action as requiring approval (`vip_protection` with a VIP identity)
+- Operator A attempts action on VIP target
+- Assert: HTTP 202 with `approval_id` in response; action NOT executed
+- Operator B (approver role) approves
+- Assert: action executes; `approval.decided` and `action.executed` events emitted
+
+*Hold Auto-Expiration*
+- Create a hold with `expires_at` set to 2 seconds in the future
+- Wait for River scheduled job to fire
+- Assert: hold status = `expired`; cascade removal jobs enqueued for all providers
+
+*Public API Token Scoping*
+- Create a token with scope `holds:read`
+- Attempt `POST /api/v1/public/actions/okta-prod/deactivate_user` with that token
+- Assert: HTTP 403 (scope insufficient)
+- Create a token with scope `okta-prod.users.deactivate`
+- Repeat request
+- Assert: HTTP 200 (or 202 if approval required)
+
+*Reconciliation Drift Detection*
+- Place a hold on a custodian
+- Manually delete the hold record from the provider's mock (simulate upstream drift)
+- Wait for `ReconcileHoldsJob` to run (advance River clock)
+- Assert: `hold.drift_detected` event emitted; cascade re-applied
+
+*Break-Glass Audit Trail*
+- Operator invokes break-glass for a PBAC-blocked action
+- Assert: `breakglass_incidents` row exists with correct operator, action, reason
+- Assert: `breakglass.used` event in event store
+- Assert: admin notification hook was called (stubbed in test)
+
+**Playwright E2E (frontend)**
+
+`e2e/playwright/` — test the critical flows against a running dev stack:
+- Login via Dex mock OIDC → land on dashboard
+- Search for an identity → see results from mock Okta plugin
+- Execute a non-destructive action → see success toast
+- Execute a destructive action → see approval modal → submit for approval
+- Mobile viewport (375px): complete the critical flow (alert → search → suspend) and assert it completes in under 60 seconds
+- Toggle dark/light theme → assert `prefers-color-scheme` class applied correctly
+
+Add `@playwright/test` to `frontend/package.json`.
+
+**Deliverables:**
+- Fixes to any code bugs found during review (committed with descriptive messages)
+- Missing unit tests written to hit coverage thresholds
+- `e2e/` directory with Go-based integration tests using testcontainers
+- `e2e/playwright/` directory with Playwright browser tests
+- `make coverage` target added to Makefile (runs `go test -coverprofile=coverage.out ./...` + `go tool cover -html=coverage.out -o coverage.html`)
+- `.github/workflows/ci.yml` updated (by coordination with Agent 7 output) to enforce coverage thresholds and run E2E tests on PRs
+- GitHub issues filed for any findings too large to fix inline
+
+**Depends on:** Agents 1–7 (reviews all output)
+
+---
+
 ## Development Environment
 
 Warden is developed entirely inside containers. **Nothing is installed on the host machine except Docker Desktop and an editor.** This is a hard constraint — it ensures the development environment is identical regardless of whether the host is Windows, macOS, or Linux, and eliminates all "works on my machine" issues caused by toolchain version drift.
@@ -546,6 +660,9 @@ Phase 5 (depends on Agent 5)
 
 Phase 6 (depends on Agents 1–6)
   └─ Agent 7: Infrastructure & Config-as-Code
+
+Phase 7 (depends on Agents 1–7)
+  └─ Agent 8: Code Review, Coverage, and End-to-End Testing
 ```
 
 ---
@@ -592,3 +709,10 @@ Phase 6 (depends on Agents 1–6)
 - [ ] Critical flow (alert → search → suspend) completes on mobile in under 60 seconds
 - [ ] Dark and light themes both pass WCAG AA contrast
 - [ ] Zero Okta-specific code anywhere outside `plugins/okta/`
+- [ ] Overall Go test coverage ≥ 80%; core packages (rbac, pbac, store, auth) ≥ 85–90%
+- [ ] E2E: hold cascade survives server restart mid-job and resumes correctly
+- [ ] E2E: PBAC default policies block and break-glass bypasses with full audit trail
+- [ ] E2E: approval workflow gates destructive actions end-to-end
+- [ ] E2E: public API token scoping enforced correctly
+- [ ] E2E: hold auto-expiration triggers cascade removal via River
+- [ ] E2E: Playwright critical flow completes on 375px mobile viewport under 60 seconds

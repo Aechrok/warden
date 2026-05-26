@@ -1,0 +1,28 @@
+# Binaries
+bin/
+*.exe
+*.out
+
+# Go
+vendor/
+
+# Node
+node_modules/
+dist/
+
+# Dev container / local env
+.env
+.env.local
+*.env
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated
+internal/db/sqlc/*.go
+proto/gen/

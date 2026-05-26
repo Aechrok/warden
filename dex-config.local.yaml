@@ -1,0 +1,27 @@
+# Dex config for local docker compose (make up).
+# host.docker.internal resolves on both the Windows host and inside containers
+# (Docker Desktop adds it to the Windows hosts file automatically), so the
+# browser and the Go server can both reach Dex at the same issuer URL.
+issuer: http://host.docker.internal:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+staticClients:
+  - id: warden
+    secret: warden-secret
+    redirectURIs:
+      - http://localhost:8080/auth/callback
+    name: Warden Local
+
+enablePasswordDB: true
+
+staticPasswords:
+  - email: admin@warden.dev
+    # bcrypt of "warden"
+    hash: "$2y$10$2b2cu/JMSiMPEiSdbmRNnuNnbAjh4Lrwr45c1SFe4bT3FMsmWfype"
+    username: admin
+    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"

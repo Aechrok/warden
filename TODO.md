@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Claude (pre-build complete)
+Last updated by: Agent 1
 
 ---
 
@@ -26,24 +26,24 @@ Last updated by: Claude (pre-build complete)
 ## Agent 1 — Foundation & Schema
 > Owns: repo scaffold, go.mod, all SQL migrations, sqlc config, domain types, event store
 
-- [ ] `go.mod` with all dependencies
-- [ ] `.gitignore`, `README.md`
-- [ ] SQL migration: `users`, `sessions`, `roles`, `user_roles`, `role_permissions`
-- [ ] SQL migration: `api_tokens`, `scim_groups`, `identity_cache`
-- [ ] SQL migration: `events` (append-only event store)
-- [ ] SQL migration: `outbox` (transactional outbox)
-- [ ] SQL migration: `jobs` (River job queue table)
-- [ ] SQL migration: `cascade_state`
-- [ ] SQL migration: `hold_templates`
-- [ ] SQL migration: `approval_requests`
-- [ ] SQL migration: `breakglass_incidents`
-- [ ] SQL migration: `pbac_policies`
-- [ ] SQL migration: `vip_identities`
-- [ ] SQL migration: `legal_holds`, `legal_hold_custodians`, `legal_hold_blocked_actions`, `integration_instances`
-- [ ] sqlc config + generated query types for all tables
-- [ ] `internal/domain/` — core types (Hold, Custodian, CascadeState, Event, Actor, etc.)
-- [ ] Event store service (`AppendEvent`, `LoadEvents`, `LoadEventsSince`)
-- [ ] Transactional outbox wired to River job insertion
+- [x] `go.mod` with all dependencies
+- [x] `.gitignore`, `README.md`
+- [x] SQL migration: `users`, `sessions`, `roles`, `user_roles`, `role_permissions`
+- [x] SQL migration: `api_tokens`, `scim_groups`, `identity_cache`
+- [x] SQL migration: `events` (append-only event store)
+- [x] SQL migration: `outbox` (transactional outbox)
+- [ ] SQL migration: `jobs` (River job queue table) — created at runtime by River driver
+- [x] SQL migration: `cascade_state`
+- [x] SQL migration: `hold_templates`
+- [x] SQL migration: `approval_requests`
+- [x] SQL migration: `breakglass_incidents`
+- [x] SQL migration: `pbac_policies`
+- [x] SQL migration: `vip_identities`
+- [x] SQL migration: `legal_holds`, `legal_hold_custodians`, `legal_hold_blocked_actions`, `integration_instances`
+- [x] sqlc config + generated query types for all tables
+- [x] `internal/domain/` — core types (Hold, Custodian, CascadeState, Event, Actor, etc.)
+- [x] Event store service (`AppendEvent`, `LoadEvents`, `LoadEventsSince`)
+- [x] Transactional outbox wired to River job insertion
 
 ---
 

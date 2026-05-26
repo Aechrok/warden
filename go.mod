@@ -1,6 +1,6 @@
 module github.com/aechrok/warden
 
-go 1.23
+go 1.25
 
 require (
 	connectrpc.com/connect v1.16.2
@@ -12,4 +12,12 @@ require (
 	github.com/zitadel/oidc/v3 v3.27.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/protobuf v1.34.2
+)
+
+// Tool dependencies managed via `go tool` (Go 1.24+). Run `go tool <name>`
+// inside the dev container; the Makefile wraps these as `make generate`.
+tool (
+	github.com/sqlc-dev/sqlc/cmd/sqlc
+	github.com/bufbuild/buf/cmd/buf
+	github.com/air-verse/air
 )

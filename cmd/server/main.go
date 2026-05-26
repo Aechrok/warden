@@ -18,6 +18,16 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/aechrok/warden/internal/config"
+	"github.com/aechrok/warden/internal/rbac"
+
+	// Blank imports register every integration plugin via init().
+	_ "github.com/aechrok/warden/plugins/google"
+	_ "github.com/aechrok/warden/plugins/google_vault"
+	_ "github.com/aechrok/warden/plugins/intune"
+	_ "github.com/aechrok/warden/plugins/jamf"
+	_ "github.com/aechrok/warden/plugins/m365"
+	_ "github.com/aechrok/warden/plugins/okta"
+	_ "github.com/aechrok/warden/plugins/slack"
 )
 
 const migrationsSource = "file://internal/db/migrations"
@@ -59,6 +69,11 @@ func run(logger *zap.Logger) error {
 		return err
 	}
 	logger.Info("warden: migrations complete")
+
+	if err := rbac.NewSeeder().Seed(ctx, pool); err != nil {
+		return err
+	}
+	logger.Info("warden: built-in roles seeded")
 
 	logger.Info("warden: ready", zap.Int("port", cfg.ServerPort))
 

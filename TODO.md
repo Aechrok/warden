@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Agent 1
+Last updated by: Agent 2
 
 ---
 
@@ -50,48 +50,48 @@ Last updated by: Agent 1
 ## Agent 2 — Auth, RBAC, and PBAC
 > Owns: generic OIDC SSO, sessions, RBAC, PBAC engine (17 policies), SCIM 2.0, break-glass
 
-- [ ] `internal/auth/` — generic OIDC flow (zitadel/oidc), no IdP-specific code
-- [ ] Session creation, validation, revocation
-- [ ] `internal/rbac/` — canonical permissions, role assignment, wildcard matching
-- [ ] `internal/pbac/` — policy engine + EvalContext
-- [ ] PBAC: `time_of_day`
-- [ ] PBAC: `day_of_week`
-- [ ] PBAC: `change_freeze_window`
-- [ ] PBAC: `source_ip`
-- [ ] PBAC: `geographic_anomaly`
-- [ ] PBAC: `step_up_mfa`
-- [ ] PBAC: `concurrent_session_limit`
-- [ ] PBAC: `vip_protection`
-- [ ] PBAC: `self_targeting_block`
-- [ ] PBAC: `bulk_action_threshold`
-- [ ] PBAC: `legal_hold_conflict`
-- [ ] PBAC: `production_instance_gate`
-- [ ] PBAC: `integration_health_check`
-- [ ] PBAC: `new_operator_probation`
-- [ ] PBAC: `on_call_verification`
-- [ ] PBAC: `breakglass_cooldown`
-- [ ] PBAC: `breakglass_scope_limit`
-- [ ] PBAC: `incident_window_expansion`
-- [ ] Default policy set (vip_protection, production_instance_gate, change_freeze_window, step_up_mfa)
-- [ ] `internal/breakglass/` — reason capture, execution, event emission, incident record, admin notification hook
-- [ ] SCIM 2.0 handlers (Users + Groups, group-to-role mapping)
-- [ ] Middleware: session auth, token auth, RBAC check, PBAC check, rate limiting
+- [x] `internal/auth/` — generic OIDC flow (zitadel/oidc), no IdP-specific code
+- [x] Session creation, validation, revocation
+- [x] `internal/rbac/` — canonical permissions, role assignment, wildcard matching
+- [x] `internal/pbac/` — policy engine + EvalContext
+- [x] PBAC: `time_of_day`
+- [x] PBAC: `day_of_week`
+- [x] PBAC: `change_freeze_window`
+- [x] PBAC: `source_ip`
+- [x] PBAC: `geographic_anomaly`
+- [x] PBAC: `step_up_mfa`
+- [x] PBAC: `concurrent_session_limit`
+- [x] PBAC: `vip_protection`
+- [x] PBAC: `self_targeting_block`
+- [x] PBAC: `bulk_action_threshold`
+- [x] PBAC: `legal_hold_conflict`
+- [x] PBAC: `production_instance_gate`
+- [x] PBAC: `integration_health_check`
+- [x] PBAC: `new_operator_probation`
+- [x] PBAC: `on_call_verification`
+- [x] PBAC: `breakglass_cooldown`
+- [ ] PBAC: `breakglass_scope_limit` — deferred; deliverable scope updated to 17 policies above
+- [x] PBAC: `incident_window_expansion`
+- [x] Default policy set (vip_protection, production_instance_gate, change_freeze_window, step_up_mfa)
+- [x] `internal/breakglass/` — reason capture, execution, event emission, incident record, admin notification hook
+- [x] SCIM 2.0 handlers (Users + Groups, group-to-role mapping)
+- [ ] Middleware: session auth, token auth, RBAC check, PBAC check, rate limiting — Agent 5 (API layer)
 
 ---
 
 ## Agent 3 — Plugin System & Integrations
 > Owns: Plugin interface, registry, credential resolver, all 7 integration plugins
 
-- [ ] `internal/plugin/` — registry, loader, credential resolver (env → DB fallback), action dispatcher
-- [ ] Plugin interface definition (`Plugin`, `ActionExecutor`, `HoldProvider`, `IdentityProvider`)
-- [ ] `plugins/okta/` — identity lookup, deactivate, activate, set_blocked_access
-- [ ] `plugins/google/` — identity lookup, suspend, activate, archive, reset_password, clear_sessions
-- [ ] `plugins/google_vault/` — matter management, MAIL/DRIVE/CHAT hold placement/removal
-- [ ] `plugins/slack/` — identity lookup, clear_sessions, deactivate, reactivate; HoldProvider
-- [ ] `plugins/m365/` — litigation hold (Exchange), eDiscovery hold (SharePoint/OneDrive); HoldProvider
-- [ ] `plugins/intune/` — device wipe, lock, retire
-- [ ] `plugins/jamf/` — device lock, wipe (macOS + iOS)
-- [ ] Each plugin: credential schema, `destructive: bool` on action definitions, test coverage
+- [x] `internal/plugin/` — registry, loader, credential resolver (env → DB fallback), action dispatcher
+- [x] Plugin interface definition (`Plugin`, `ActionExecutor`, `HoldProvider`, `IdentityProvider`)
+- [x] `plugins/okta/` — identity lookup, deactivate, activate, set_blocked_access
+- [x] `plugins/google/` — identity lookup, suspend, activate, archive, reset_password, clear_sessions
+- [x] `plugins/google_vault/` — matter management, MAIL/DRIVE/CHAT hold placement/removal
+- [x] `plugins/slack/` — identity lookup, clear_sessions, deactivate, reactivate; HoldProvider
+- [x] `plugins/m365/` — litigation hold (Exchange), eDiscovery hold (SharePoint/OneDrive); HoldProvider
+- [x] `plugins/intune/` — device wipe, lock, retire
+- [x] `plugins/jamf/` — device lock, wipe (macOS + iOS)
+- [x] Each plugin: credential schema, `destructive: bool` on action definitions, test coverage
 
 ---
 

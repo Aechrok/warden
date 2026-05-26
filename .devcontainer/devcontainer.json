@@ -1,0 +1,32 @@
+{
+  "name": "Warden Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "warden-dev",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "Vue.volar",
+        "bradlc.vscode-tailwindcss",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "go.toolsManagement.checkForUpdates": "off",
+        "go.useLanguageServer": true,
+        "editor.formatOnSave": true,
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "cd frontend && npm install",
+  "remoteUser": "vscode",
+  "forwardPorts": [8080, 5173, 5432],
+  "portsAttributes": {
+    "8080": { "label": "Warden API" },
+    "5173": { "label": "Vite Dev Server" },
+    "5432": { "label": "PostgreSQL" }
+  }
+}

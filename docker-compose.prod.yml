@@ -1,0 +1,46 @@
+services:
+  warden:
+    image: ghcr.io/aechrok/warden:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://warden:${POSTGRES_PASSWORD}@postgres:5432/warden?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL}
+      SERVER_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      caddy: "${WARDEN_DOMAIN}"
+      caddy.reverse_proxy: "{{upstreams 8080}}"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: warden
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: warden
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warden"]
+      interval: 10s
+      retries: 5
+
+  caddy:
+    image: lucaslorentz/caddy-docker-proxy:2.9-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - caddy-data:/data
+
+volumes:
+  pg-data:
+  caddy-data:

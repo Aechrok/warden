@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Agent 6
+Last updated by: Agent 7
 
 ---
 
@@ -164,18 +164,18 @@ Last updated by: Agent 6
 ## Agent 7 — Infrastructure, CI/CD, Config-as-Code
 > Owns: dev container, Dockerfile, Helm chart, GitHub Actions, Makefile, warden-ctl
 
-- [ ] `.devcontainer/devcontainer.json`
-- [ ] `.devcontainer/Dockerfile` (Go, Node, sqlc, buf, air, golangci-lint, golang-migrate)
-- [ ] `.devcontainer/docker-compose.yml` (Postgres 16, Dex mock OIDC, River UI)
-- [ ] `Makefile` (dev, migrate, migrate-create, generate, test, lint, build, ctl-apply)
-- [ ] `Dockerfile` — multi-stage production image (distroless final, linux/amd64 + linux/arm64)
-- [ ] `docker-compose.prod.yml` — single-node reference (Warden + Postgres + Caddy)
-- [ ] `charts/warden/` — Helm chart (Deployment, Service, Ingress, ConfigMap, Secret, HPA, PDB, ServiceMonitor)
-- [ ] `.github/workflows/ci.yml` — lint, test, integration test, build, helm lint
-- [ ] `.github/workflows/release.yml` — multi-arch image build, push, Helm package, GitHub Release
-- [ ] `config/schema/` — JSON Schema for YAML config files
-- [ ] `cmd/warden-ctl/` — apply, export, diff
-- [ ] `docs/` — architecture, API reference, deployment guide, runbook, plugin authoring guide, dev setup (one-page)
+- [x] `.devcontainer/devcontainer.json`
+- [x] `.devcontainer/Dockerfile` (Go, Node, sqlc, buf, air, golangci-lint, golang-migrate)
+- [x] `.devcontainer/docker-compose.yml` (Postgres 16, Dex mock OIDC, River UI)
+- [x] `Makefile` (dev, migrate, migrate-create, generate, test, lint, build, ctl-apply)
+- [x] `Dockerfile` — multi-stage production image (distroless final, linux/amd64 + linux/arm64)
+- [x] `docker-compose.prod.yml` — single-node reference (Warden + Postgres + Caddy)
+- [x] `charts/warden/` — Helm chart (Deployment, Service, Ingress, ConfigMap, Secret, HPA, PDB, ServiceMonitor)
+- [x] `.github/workflows/ci.yml` — lint, test, integration test, build, helm lint
+- [x] `.github/workflows/release.yml` — multi-arch image build, push, Helm package, GitHub Release
+- [x] `config/schema/` — JSON Schema for YAML config files
+- [x] `cmd/warden-ctl/` — apply, export, diff
+- [x] `docs/` — architecture, API reference, deployment guide, runbook, plugin authoring guide, dev setup (one-page)
 
 ---
 

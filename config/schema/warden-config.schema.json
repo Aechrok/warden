@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/aechrok/warden/config/schema/warden-config.schema.json",
+  "title": "WardenConfig",
+  "description": "Schema for warden-config.yaml — the config-as-code format consumed by warden-ctl.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pbac_policies": {
+      "type": "array",
+      "description": "List of policy-based access control policies to reconcile.",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique policy name (matches the policy ID registered in the PBAC engine).",
+            "examples": ["change_freeze_window", "vip_protection", "on_call_verification"]
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the policy is active."
+          },
+          "config": {
+            "type": "object",
+            "description": "Policy-specific configuration object. Schema depends on the policy.",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "hold_templates": {
+      "type": "array",
+      "description": "Reusable legal hold templates.",
+      "items": {
+        "type": "object",
+        "required": ["name", "provider_glob", "expiration_days"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique template name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description of the template's purpose."
+          },
+          "provider_glob": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Glob pattern matching plugin IDs this template applies to. Use * for all.",
+            "examples": ["*", "google_vault", "m365*"]
+          },
+          "expiration_days": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Default hold duration in days."
+          }
+        }
+      }
+    },
+    "vip_identities": {
+      "type": "array",
+      "description": "Identities requiring elevated protection (triggers vip_protection PBAC policy).",
+      "items": {
+        "type": "object",
+        "required": ["email", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Email address of the protected identity."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Business reason for VIP designation."
+          }
+        }
+      }
+    },
+    "instances": {
+      "type": "array",
+      "description": "Integration plugin instances to register.",
+      "items": {
+        "type": "object",
+        "required": ["name", "plugin_id"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique instance name used in the UI and API."
+          },
+          "plugin_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plugin identifier (e.g. okta, google, slack, m365, intune, jamf, google_vault).",
+            "examples": ["okta", "google", "slack", "m365", "intune", "jamf", "google_vault"]
+          },
+          "credentials": {
+            "type": "object",
+            "description": "Plugin-specific credential map. Values may reference environment variables using {{ env.VAR_NAME }} syntax.",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

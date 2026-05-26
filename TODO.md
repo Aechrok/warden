@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Agent 2
+Last updated by: Agent 4
 
 ---
 
@@ -98,14 +98,14 @@ Last updated by: Agent 2
 ## Agent 4 — Legal Hold Engine
 > Owns: hold lifecycle, cascade state machine, River workers, hold templates, auto-expiration, reconciliation
 
-- [ ] `internal/legalhold/` — Hold service (create, add custodian, remove custodian, release, expire)
-- [ ] `CascadeStateMachine` — per-custodian, per-provider state transitions
-- [ ] River worker: `CascadePlaceJob`
-- [ ] River worker: `CascadeRemoveJob`
-- [ ] River worker: `ReconcileHoldsJob` (scheduled, 2-minute interval)
-- [ ] River worker: `ExpireHoldJob` (scheduled per hold)
-- [ ] Hold templates: CRUD, glob-matched provider targeting, default expiration
-- [ ] All state transitions emit events to event store
+- [x] `internal/legalhold/` — Hold service (create, add custodian, remove custodian, release, expire)
+- [x] `CascadeStateMachine` — per-custodian, per-provider state transitions
+- [x] River worker: `CascadePlaceJob`
+- [x] River worker: `CascadeRemoveJob`
+- [x] River worker: `ReconcileHoldsJob` (scheduled, 2-minute interval)
+- [x] River worker: `ExpireHoldJob` (scheduled per hold)
+- [x] Hold templates: CRUD, glob-matched provider targeting, default expiration
+- [x] All state transitions emit events to event store
 
 ---
 
@@ -190,7 +190,7 @@ Last updated by: Agent 2
 - [ ] File all findings as GitHub issues or fix inline
 
 **Coverage**
-- [ ] Add `github.com/testcontainers/testcontainers-go` to `go.mod`
+- [x] Add `github.com/testcontainers/testcontainers-go` to `go.mod`
 - [ ] `internal/rbac/` ≥ 90% — every permission + wildcard match path covered
 - [ ] `internal/pbac/` ≥ 90% — each policy has allow + deny test case
 - [ ] `internal/store/` ≥ 90% — optimistic concurrency conflict path tested

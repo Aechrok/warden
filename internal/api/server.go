@@ -70,10 +70,7 @@ func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logg
 
 	// Install River's own schema (river_job, river_queue, river_leader, etc.)
 	// before constructing the client. Idempotent — safe to call on every boot.
-	riverMigrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
-	if err != nil {
-		return nil, fmt.Errorf("api: river migrator: %w", err)
-	}
+	riverMigrator := rivermigrate.New(riverpgxv5.New(pool), nil)
 	if _, err := riverMigrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return nil, fmt.Errorf("api: river migrate up: %w", err)
 	}

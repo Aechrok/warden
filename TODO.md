@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Claude (init)
+Last updated by: Claude (pre-build complete)
 
 ---
 
@@ -14,12 +14,12 @@ Last updated by: Claude (init)
 - [x] Detail dual API surfaces (internal + public)
 - [x] Define containerized dev environment
 - [x] Hard constraint: no prior product references in codebase
-- [ ] Fix remaining prior product references in WARDEN_PLAN.md
-- [ ] Define new RBAC permissions for Warden-specific features
-- [ ] Add `vip_identities` schema entry to plan
-- [ ] Define on-call verification interface in plan
-- [ ] Initialize git repo and push to github.com/aechrok/warden
-- [ ] Create `.gitignore`
+- [x] Fix remaining prior product references in WARDEN_PLAN.md
+- [x] Define new RBAC permissions for Warden-specific features (26 permissions, 6 built-in roles)
+- [x] Add `vip_identities` schema entry to plan
+- [x] Define on-call verification interface in plan (OnCallResolver, 3 providers)
+- [x] Initialize git repo and push to github.com/aechrok/warden
+- [x] Create `.gitignore` and `.gitattributes` (LF enforcement)
 
 ---
 

@@ -147,7 +147,7 @@ Dominion: all config via UI/API. Warden: UI/API plus declarative YAML/JSON. Role
 
 ---
 
-## Database Schema Changes from Dominion
+## Database Schema
 
 ### Remove
 - `audit_logs` table (replaced by event store)
@@ -170,6 +170,83 @@ Dominion: all config via UI/API. Warden: UI/API plus declarative YAML/JSON. Role
 
 ### Keep (unchanged)
 - `users`, `sessions`, `roles`, `user_roles`, `role_permissions`, `api_tokens`, `scim_groups`, `identity_cache`
+
+### New: `vip_identities`
+```sql
+CREATE TABLE vip_identities (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email       TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,            -- e.g. "C-Suite", "Board", "Legal Counsel"
+  added_by    UUID REFERENCES users(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+Used by the `vip_protection` PBAC policy. When an action targets an email present in this table, the policy returns `require_approval` regardless of the operator's role.
+
+### On-Call Verification Interface
+
+The `on_call_verification` PBAC policy needs to know if the acting operator is currently on-call. Rather than hardcoding a PagerDuty or OpsGenie client, the policy calls an `OnCallResolver` interface:
+
+```go
+type OnCallResolver interface {
+    IsOnCall(ctx context.Context, email string) (bool, error)
+}
+```
+
+Agent 2 implements the interface and a factory that reads `ON_CALL_PROVIDER` from config:
+- `ON_CALL_PROVIDER=pagerduty` — uses PagerDuty REST API (`/oncalls` endpoint, filtered by user email)
+- `ON_CALL_PROVIDER=opsgenie` — uses OpsGenie REST API (`/v2/schedules/on-calls`)
+- `ON_CALL_PROVIDER=none` — returns `true` for all operators (disables the policy; safe default for orgs without on-call tooling)
+
+Credentials (`ON_CALL_API_KEY`) are read from environment. The resolver is injected into `EvalContext` at request time.
+
+---
+
+## RBAC Permissions
+
+All 26 canonical permissions. Wildcard matching applies: a role granted `holds:*` covers both `holds:read` and `holds:write`.
+
+| Permission | Description |
+|------------|-------------|
+| `users:read` | View operator accounts |
+| `users:write` | Create, update, deactivate operator accounts |
+| `audit:read` | Query and export the event log |
+| `identities:read` | Search and look up identities across integrations |
+| `identities:write` | Refresh identity cache entries |
+| `devices:read` | List and view device inventory |
+| `integrations:read` | View available integrations and actions |
+| `integrations:execute` | Execute actions against integrations |
+| `instances:read` | View integration instance configurations |
+| `instances:write` | Create, update, delete integration instances |
+| `holds:read` | View legal holds and custodian lists |
+| `holds:write` | Create, modify, and release legal holds |
+| `hold_templates:read` | View hold templates |
+| `hold_templates:write` | Create, update, delete hold templates |
+| `roles:read` | View roles and permission assignments |
+| `roles:write` | Create roles and assign permissions |
+| `tokens:read` | View API tokens |
+| `tokens:write` | Create and revoke API tokens |
+| `approvals:read` | View the approval queue |
+| `approvals:write` | Approve or reject pending actions |
+| `breakglass:use` | Invoke the break-glass emergency override |
+| `breakglass:review` | View break-glass incident list and post-incident records |
+| `pbac_policies:read` | View PBAC policy configuration |
+| `pbac_policies:write` | Create, update, delete PBAC policies |
+| `vip_identities:read` | View the VIP identity list |
+| `vip_identities:write` | Add or remove identities from the VIP list |
+| `assistant:use` | Access the AI assistant |
+| `scim:admin` | Manage SCIM configuration and group mappings |
+
+**Built-in roles:**
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | All permissions |
+| `operator` | `identities:*`, `devices:read`, `integrations:*`, `holds:*`, `hold_templates:read`, `approvals:*`, `breakglass:use`, `tokens:*`, `audit:read`, `assistant:use` |
+| `auditor` | `audit:read`, `identities:read`, `holds:read`, `roles:read`, `tokens:read`, `devices:read`, `instances:read` |
+| `legal_operator` | `holds:*`, `hold_templates:*`, `identities:read`, `audit:read` |
+| `read_only` | `identities:read`, `devices:read`, `holds:read`, `audit:read`, `tokens:read` |
+| `approver` | `approvals:*`, `breakglass:review`, `audit:read` |
 
 ---
 
@@ -202,7 +279,7 @@ The rebuild is divided into 7 agents working in sequence (with parallelism where
 **Deliverables:**
 - `internal/auth/` — OIDC flow with configurable issuer/client_id/client_secret/scopes (no Okta-specific code)
 - Session creation, validation, and revocation
-- `internal/rbac/` — 17+ canonical permissions, role assignment, wildcard permission matching (unchanged logic from Dominion, re-implemented cleanly)
+- `internal/rbac/` — full canonical permission set (see RBAC Permissions below), role assignment, wildcard permission matching
 - `internal/pbac/` — YAML-defined policy engine implementing all 17 policies defined in the PBAC catalog (see delta §8). Policy interface: `Evaluate(ctx EvalContext, actor Actor, action Action) PolicyResult` where `PolicyResult` is `allow | deny | require_approval`. `EvalContext` carries: timestamp, source IP, geo-region, session age, session count, operator tenure, on-call roster membership, target identity flags (VIP, self), instance name, integration health, active incident flag, bulk action counters, active hold metadata. Each policy is a stateless function; the engine evaluates all matching policies and returns the most restrictive result. Ships with a default policy set covering `vip_protection`, `production_instance_gate`, `change_freeze_window`, and `step_up_mfa` with sane defaults.
 - `internal/breakglass/` — break-glass request flow: reason capture, immediate execution, event emission, incident record creation, admin notification hook
 - SCIM 2.0 handlers (Users + Groups endpoints, group-to-role mapping)
@@ -341,7 +418,7 @@ Warden exposes two fully separate API surfaces mounted at different path prefixe
 - `views/BreakGlassView` — emergency override form; incident list for admins
 - `views/SettingsView` — roles, permissions, instances, SCIM mappings, PBAC policies, hold templates, config export/import
 - Dark + light theme: `prefers-color-scheme` detection on first visit, toggle persisted in localStorage
-- Permission-based route guards and UI element visibility (same model as Dominion)
+- Permission-based route guards and UI element visibility (keyed to the canonical RBAC permission set)
 - Mobile-first: 60-second critical flow (alert → search → suspend) fully functional on phone
 
 **Depends on:** Agent 5 (proto/connect types)
@@ -478,9 +555,11 @@ Phase 6 (depends on Agents 1–6)
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Query layer | sqlc | Type-safe, no ORM magic, schema is the source of truth |
-| Job queue | River (PostgreSQL-backed) | No new infrastructure; jobs survive restarts; Dominion's goroutines don't |
+| Job queue | River (PostgreSQL-backed) | No new infrastructure; jobs survive restarts; goroutine-based approaches lose work on restart |
 | API protocol | connect-go (gRPC + REST) | One proto definition, two protocols; internal efficiency + external compatibility |
-| OIDC | `zitadel/oidc` or `coreos/go-oidc` | Provider-agnostic; no Okta SDK |
+| OIDC | `zitadel/oidc` | Provider-agnostic; no IdP-specific SDK |
+| Mock OIDC (dev) | Dex | Lightweight, runs in docker-compose, no real IdP needed locally |
+| Go module path | `github.com/aechrok/warden` | Matches the GitHub repo |
 | Event store | Append-only events table (PostgreSQL) | No Kafka overhead; fits the scale; replay and time-travel built in |
 | Plugin loading | `init()` registration | No dynamic loading; compile-time safety; clear import graph |
 | PBAC policies | YAML files + DB storage | GitOps-friendly; UI-editable; declarative |
@@ -501,7 +580,7 @@ Phase 6 (depends on Agents 1–6)
 
 ## Success Criteria
 
-- [ ] All 7 integrations from Dominion are re-implemented as Warden plugins
+- [ ] All 7 integration plugins ship: Okta, Google Workspace, Google Vault, Slack, M365, Intune, JAMF
 - [ ] Legal hold cascade is durable: server restart mid-cascade resumes from last successful step
 - [ ] Cascade state machine is visible in the UI per hold, per custodian, per provider
 - [ ] A new OIDC provider can be configured without code changes

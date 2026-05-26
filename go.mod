@@ -11,6 +11,7 @@ require (
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.11.4
 	github.com/zitadel/oidc/v3 v3.27.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/oauth2 v0.21.0
 	google.golang.org/protobuf v1.34.2
 )
 

@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strings"
 
-	httphelper "github.com/zitadel/oidc/v3/pkg/http"
 	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 
@@ -43,8 +42,8 @@ type Provider struct {
 }
 
 // NewProvider discovers the OIDC issuer's metadata and constructs a relying
-// party configured with PKCE. The redirect URL is read from the environment
-// (OIDC_REDIRECT_URL) or defaulted to /auth/callback on the server port.
+// party. The redirect URL is read from OIDC_REDIRECT_URL or defaulted to
+// /auth/callback on the server port.
 func NewProvider(ctx context.Context, cfg *config.Config) (*Provider, error) {
 	if cfg == nil {
 		return nil, errors.New("auth: nil config")
@@ -61,17 +60,8 @@ func NewProvider(ctx context.Context, cfg *config.Config) (*Provider, error) {
 		redirectURL = fmt.Sprintf("http://localhost:%d/auth/callback", cfg.ServerPort)
 	}
 
-	// PKCE-only flows (public clients) tolerate an empty client secret; the
-	// relying party will still negotiate code_challenge.
-	key, err := pkceCookieKey(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("auth: derive cookie key: %w", err)
-	}
-	cookieHandler := httphelper.NewCookieHandler(key, key, httphelper.WithUnsecure())
-
 	httpClient := oidcHTTPClient(cfg)
 	options := []rp.Option{
-		rp.WithPKCE(cookieHandler),
 		rp.WithHTTPClient(httpClient),
 	}
 
@@ -189,18 +179,6 @@ func ValidateState(expected, actual string) bool {
 		diff |= expected[i] ^ actual[i]
 	}
 	return diff == 0
-}
-
-// pkceCookieKey returns a 32-byte key used by the OIDC relying party's PKCE
-// cookie handler. We reuse the configured encryption key since it already
-// has the right shape and lifetime.
-func pkceCookieKey(cfg *config.Config) ([]byte, error) {
-	if len(cfg.EncryptionKey) != 32 {
-		return nil, errors.New("auth: encryption key must be 32 bytes")
-	}
-	out := make([]byte, 32)
-	copy(out, cfg.EncryptionKey)
-	return out, nil
 }
 
 // oidcHTTPClient returns an HTTP client suitable for OIDC discovery and token

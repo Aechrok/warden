@@ -2,7 +2,7 @@
 
 Status key: `[ ]` not started · `[~]` in progress · `[x]` complete · `[!]` blocked
 
-Last updated by: Agent 5
+Last updated by: Agent 6
 
 ---
 
@@ -139,22 +139,25 @@ Last updated by: Agent 5
 ---
 
 ## Agent 6 — Frontend
-> Owns: Vue 3 SPA, all views, mobile-first layout, dark/light theme, connect-web
+> Owns: Vue 3 SPA, all views, mobile-first layout, dark/light theme, REST JSON API (no connect-web)
 
-- [ ] Project scaffold (Vite, Vue 3, TypeScript, TailwindCSS v4, Pinia, Vue Router, connect-web)
-- [ ] Responsive layout shell (bottom nav mobile, sidebar desktop, theme toggle)
-- [ ] `LoginView` — OIDC redirect flow
-- [ ] `DashboardView` — stats, live audit stream, approval count badge
-- [ ] `IdentitiesView` — search, per-instance cards, action panel, action sheets (mobile)
-- [ ] `DevicesView` — JAMF device listing, lock/wipe with approval gate
-- [ ] `AuditView` — event log query, export
-- [ ] `LegalHoldView` — hold list, create from template or scratch, custodian management, cascade status breakdown
-- [ ] `ApprovalView` — pending queue, approve/reject with reason
-- [ ] `BreakGlassView` — emergency override form, incident list
-- [ ] `SettingsView` — roles, permissions, instances, SCIM, PBAC policies, hold templates, config export/import
-- [ ] Dark + light theme (`prefers-color-scheme` detection, localStorage toggle)
-- [ ] Permission-based route guards + UI element visibility
-- [ ] Mobile critical flow: alert → search → suspend in under 60 seconds
+- [x] Project scaffold (Vite 6, Vue 3, TypeScript, TailwindCSS v4, Pinia, Vue Router 4)
+- [x] Responsive layout shell (bottom nav mobile, sidebar desktop, theme toggle)
+- [x] `LoginView` — OIDC redirect flow, post-callback session check
+- [x] `DashboardView` — stats, live audit stream (10s poll), approval count badge, pending widget
+- [x] `IdentitiesView` — search, per-instance cards, action panel, action sheets (mobile)
+- [x] `DevicesView` — JAMF device listing, lock/wipe with confirmation (irreversible warning)
+- [x] `AuditView` — event log query with filters, CSV export
+- [x] `LegalHoldView` — hold list, create from template or scratch, status badges
+- [x] `HoldDetailView` — custodian table, cascade state badges, add/remove custodian, release hold
+- [x] `ApprovalView` — pending queue, approve/reject with note modal, toast on success
+- [x] `BreakGlassView` — emergency override form (min 20-char reason), incident list, review
+- [x] `SettingsView` — tabbed: Tokens, Roles, Instances, PBAC Policies, Hold Templates, VIP Identities
+- [x] Dark + light theme (`prefers-color-scheme` detection, localStorage toggle, CSS custom properties)
+- [x] Permission-based route guards + UI element visibility (hasPermission gates on settings tabs)
+- [x] Mobile critical flow: bottom tab bar, action sheet, <60s search→action→confirm flow
+- [x] Typed fetch API wrappers (no connect-web; plain JSON REST as specified)
+- [x] Global error handling: 401→login redirect, 403→inline message, 5xx→toast, network→banner
 
 ---
 

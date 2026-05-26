@@ -29,7 +29,8 @@ services:
     environment:
       DATABASE_URL: postgres://warden:warden@postgres:5432/warden?sslmode=disable
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-      OIDC_ISSUER: http://host.docker.internal:5556/dex
+      OIDC_ISSUER: http://localhost:5556/dex
+      OIDC_INTERNAL_ISSUER: http://dex:5556/dex
       OIDC_CLIENT_ID: warden
       OIDC_CLIENT_SECRET: warden-secret
       OIDC_REDIRECT_URL: http://localhost:8080/auth/callback

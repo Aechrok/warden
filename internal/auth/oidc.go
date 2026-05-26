@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -68,9 +69,10 @@ func NewProvider(ctx context.Context, cfg *config.Config) (*Provider, error) {
 	}
 	cookieHandler := httphelper.NewCookieHandler(key, key, httphelper.WithUnsecure())
 
+	httpClient := oidcHTTPClient(cfg)
 	options := []rp.Option{
 		rp.WithPKCE(cookieHandler),
-		rp.WithHTTPClient(http.DefaultClient),
+		rp.WithHTTPClient(httpClient),
 	}
 
 	provider, err := rp.NewRelyingPartyOIDC(
@@ -199,6 +201,41 @@ func pkceCookieKey(cfg *config.Config) ([]byte, error) {
 	out := make([]byte, 32)
 	copy(out, cfg.EncryptionKey)
 	return out, nil
+}
+
+// oidcHTTPClient returns an HTTP client suitable for OIDC discovery and token
+// exchange. When OIDCInternalIssuer is set, outbound connections to the public
+// issuer host are dialed to the internal host instead — the Host header is
+// preserved so the IdP's own issuer-match check still passes. This lets the
+// browser use a host it can reach (e.g. localhost) while the server connects
+// to a Docker-internal service name (e.g. dex).
+func oidcHTTPClient(cfg *config.Config) *http.Client {
+	if cfg.OIDCInternalIssuer == "" {
+		return http.DefaultClient
+	}
+	pubURL, err := url.Parse(cfg.OIDCIssuer)
+	if err != nil {
+		return http.DefaultClient
+	}
+	intURL, err := url.Parse(cfg.OIDCInternalIssuer)
+	if err != nil {
+		return http.DefaultClient
+	}
+	pubHost := pubURL.Host
+	intHost := intURL.Host
+	if pubHost == "" || intHost == "" {
+		return http.DefaultClient
+	}
+	base := &net.Dialer{}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if addr == pubHost {
+				addr = intHost
+			}
+			return base.DialContext(ctx, network, addr)
+		},
+	}
+	return &http.Client{Transport: transport}
 }
 
 // IssuerHost returns the host of the configured OIDC issuer, useful for log

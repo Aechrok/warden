@@ -14,15 +14,16 @@ import (
 
 // Config is the resolved runtime configuration.
 type Config struct {
-	DatabaseURL     string
-	ServerPort      int
-	EncryptionKey   []byte
-	OIDCIssuer      string
-	OIDCClientID    string
-	OIDCSecret      string
-	OIDCRedirectURL string
-	OnCallProvider  string
-	OnCallAPIKey    string
+	DatabaseURL          string
+	ServerPort           int
+	EncryptionKey        []byte
+	OIDCIssuer           string
+	OIDCInternalIssuer   string
+	OIDCClientID         string
+	OIDCSecret           string
+	OIDCRedirectURL      string
+	OnCallProvider       string
+	OnCallAPIKey         string
 }
 
 // Load reads configuration from the process environment. Fails fast with a
@@ -70,14 +71,15 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		DatabaseURL:     dbURL,
-		ServerPort:      port,
-		EncryptionKey:   encKey,
-		OIDCIssuer:      strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
-		OIDCClientID:    strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
-		OIDCSecret:      strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
-		OIDCRedirectURL: strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URL")),
-		OnCallProvider:  onCallProvider,
-		OnCallAPIKey:    strings.TrimSpace(os.Getenv("ON_CALL_API_KEY")),
+		DatabaseURL:        dbURL,
+		ServerPort:         port,
+		EncryptionKey:      encKey,
+		OIDCIssuer:         strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
+		OIDCInternalIssuer: strings.TrimSpace(os.Getenv("OIDC_INTERNAL_ISSUER")),
+		OIDCClientID:       strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
+		OIDCSecret:         strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
+		OIDCRedirectURL:    strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URL")),
+		OnCallProvider:     onCallProvider,
+		OnCallAPIKey:       strings.TrimSpace(os.Getenv("ON_CALL_API_KEY")),
 	}, nil
 }

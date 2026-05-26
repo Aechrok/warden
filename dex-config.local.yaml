@@ -1,8 +1,8 @@
 # Dex config for local docker compose (make up).
-# host.docker.internal resolves on both the Windows host and inside containers
-# (Docker Desktop adds it to the Windows hosts file automatically), so the
-# browser and the Go server can both reach Dex at the same issuer URL.
-issuer: http://host.docker.internal:5556/dex
+# localhost:5556 is where the browser can reach Dex via Docker's port mapping.
+# The warden server uses OIDC_INTERNAL_ISSUER so it dials dex:5556 internally
+# while sending Host: localhost:5556, satisfying Dex's issuer check.
+issuer: http://localhost:5556/dex
 
 storage:
   type: memory

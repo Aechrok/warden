@@ -22,6 +22,6 @@ enablePasswordDB: true
 staticPasswords:
   - email: admin@warden.dev
     # bcrypt of "warden"
-    hash: "$2y$10$2b2cu/JMSiMPEiSdbmRNnuNnbAjh4Lrwr45c1SFe4bT3FMsmWfype"
+    hash: "$2y$10$H2AagIY1bivX4AkLc.0BhuHhBN9LjedjcrUil305/g0A0mKNqRTs."
     username: admin
     userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"

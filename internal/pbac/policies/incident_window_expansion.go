@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // IncidentWindowExpansion is the policy that expands operator permissions
@@ -18,9 +18,9 @@ type IncidentWindowExpansion struct{}
 func (IncidentWindowExpansion) Name() string { return "incident_window_expansion" }
 
 // Evaluate implements pbac.Policy.
-func (IncidentWindowExpansion) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (IncidentWindowExpansion) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.ActiveIncident {
-		return pbac.Override
+		return pbactypes.Override
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

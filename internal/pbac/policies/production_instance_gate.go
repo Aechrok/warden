@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // ProductionInstanceGateConfig configures the ProductionInstanceGate policy.
@@ -25,9 +25,9 @@ type ProductionInstanceGate struct {
 func (ProductionInstanceGate) Name() string { return "production_instance_gate" }
 
 // Evaluate implements pbac.Policy.
-func (p ProductionInstanceGate) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p ProductionInstanceGate) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if !ec.Destructive || ec.InstanceName == "" {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	pattern := p.Config.ProdPattern
 	if pattern == "" {
@@ -40,9 +40,9 @@ func (p ProductionInstanceGate) Evaluate(_ context.Context, ec pbac.EvalContext)
 		ok = containsProdHint(ec.InstanceName)
 	}
 	if ok {
-		return pbac.RequireApproval
+		return pbactypes.RequireApproval
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }
 
 func containsProdHint(name string) bool {

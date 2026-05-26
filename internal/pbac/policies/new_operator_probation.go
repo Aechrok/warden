@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // NewOperatorProbationConfig configures the NewOperatorProbation policy.
@@ -26,16 +26,16 @@ type NewOperatorProbation struct {
 func (NewOperatorProbation) Name() string { return "new_operator_probation" }
 
 // Evaluate implements pbac.Policy.
-func (p NewOperatorProbation) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p NewOperatorProbation) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if !ec.Destructive {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if p.Config.ProbationDays <= 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	threshold := time.Duration(p.Config.ProbationDays) * 24 * time.Hour
 	if ec.OperatorTenure < threshold {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

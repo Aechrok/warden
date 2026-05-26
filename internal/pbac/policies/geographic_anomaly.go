@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // GeographicAnomalyConfig configures the GeographicAnomaly policy.
@@ -26,17 +26,17 @@ type GeographicAnomaly struct {
 func (GeographicAnomaly) Name() string { return "geographic_anomaly" }
 
 // Evaluate implements pbac.Policy.
-func (p GeographicAnomaly) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p GeographicAnomaly) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.GeoRegion == "" {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if len(p.Config.AllowedRegions) == 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	for _, r := range p.Config.AllowedRegions {
 		if r == ec.GeoRegion {
-			return pbac.Allow
+			return pbactypes.Allow
 		}
 	}
-	return pbac.Deny
+	return pbactypes.Deny
 }

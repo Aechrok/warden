@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // BreakGlassActionKey is the canonical action key the break-glass service
@@ -29,16 +29,16 @@ type BreakGlassCooldown struct {
 func (BreakGlassCooldown) Name() string { return "breakglass_cooldown" }
 
 // Evaluate implements pbac.Policy.
-func (p BreakGlassCooldown) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p BreakGlassCooldown) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.ActionKey != BreakGlassActionKey {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if p.Config.CooldownHours <= 0 || ec.LastBreakGlass == nil {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	cooldown := time.Duration(p.Config.CooldownHours) * time.Hour
 	if ec.Now.Sub(*ec.LastBreakGlass) < cooldown {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // SourceIPConfig configures the SourceIP policy. AllowedCIDRs is a list of
@@ -30,25 +30,25 @@ type SourceIP struct {
 func (SourceIP) Name() string { return "source_ip" }
 
 // Evaluate implements pbac.Policy.
-func (p SourceIP) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p SourceIP) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.SourceIP == nil {
 		// No client IP available — fail closed only when violation is
 		// configured as Deny; we cannot prove the IP is in the allowlist.
 		if p.Config.RequireApprovalOnViolation {
-			return pbac.RequireApproval
+			return pbactypes.RequireApproval
 		}
-		return pbac.Deny
+		return pbactypes.Deny
 	}
 	nets := parseCIDRs(p.Config.AllowedCIDRs)
 	for _, n := range nets {
 		if n.Contains(ec.SourceIP) {
-			return pbac.Allow
+			return pbactypes.Allow
 		}
 	}
 	if p.Config.RequireApprovalOnViolation {
-		return pbac.RequireApproval
+		return pbactypes.RequireApproval
 	}
-	return pbac.Deny
+	return pbactypes.Deny
 }
 
 func parseCIDRs(in []string) []*net.IPNet {

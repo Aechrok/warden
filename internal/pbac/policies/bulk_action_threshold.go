@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // BulkActionThresholdConfig configures the BulkActionThreshold policy. The
@@ -27,12 +27,12 @@ type BulkActionThreshold struct {
 func (BulkActionThreshold) Name() string { return "bulk_action_threshold" }
 
 // Evaluate implements pbac.Policy.
-func (p BulkActionThreshold) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (p BulkActionThreshold) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if p.Config.MaxCount <= 0 {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if ec.BulkCount > p.Config.MaxCount {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

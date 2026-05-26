@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/aechrok/warden/internal/pbac"
+	pbactypes "github.com/aechrok/warden/internal/pbac/types"
 )
 
 // HoldReleaseActionKey is the canonical action key the legal-hold service
@@ -22,12 +22,12 @@ type LegalHoldConflict struct{}
 func (LegalHoldConflict) Name() string { return "legal_hold_conflict" }
 
 // Evaluate implements pbac.Policy.
-func (LegalHoldConflict) Evaluate(_ context.Context, ec pbac.EvalContext) pbac.Result {
+func (LegalHoldConflict) Evaluate(_ context.Context, ec pbactypes.EvalContext) pbactypes.Result {
 	if ec.ActionKey != HoldReleaseActionKey {
-		return pbac.Allow
+		return pbactypes.Allow
 	}
 	if ec.ActiveHoldCount > 1 {
-		return pbac.Deny
+		return pbactypes.Deny
 	}
-	return pbac.Allow
+	return pbactypes.Allow
 }

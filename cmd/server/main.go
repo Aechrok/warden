@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,7 +106,10 @@ func run(logger *zap.Logger) error {
 }
 
 func runMigrations(databaseURL string) error {
-	m, err := migrate.New(migrationsSource, databaseURL)
+	// The pgx/v5 migrate driver registers under "pgx5://" not "postgres://".
+	// Rewrite the scheme so migrate finds its driver while the pool URL is unchanged.
+	migrateURL := strings.Replace(databaseURL, "postgres://", "pgx5://", 1)
+	m, err := migrate.New(migrationsSource, migrateURL)
 	if err != nil {
 		return err
 	}

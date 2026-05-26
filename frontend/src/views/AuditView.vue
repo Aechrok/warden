@@ -93,9 +93,8 @@
             <tr
               v-for="event in events"
               :key="event.id"
-              class="transition-colors"
+              class="transition-colors hover:bg-[var(--surface)]"
               style="border-bottom: 1px solid var(--border);"
-              :style="{ ':hover': { background: 'var(--surface)' } }"
             >
               <td class="px-4 py-3 text-xs font-mono" style="color: var(--text-muted);">
                 {{ formatDate(event.occurred_at) }}

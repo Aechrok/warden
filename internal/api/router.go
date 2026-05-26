@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -72,6 +74,11 @@ func (s *Server) Handler() http.Handler {
 	// /api/v1/public/ — bearer token auth
 	// ----------------------------------------------------------------
 	mountPublic(mux, pubDeps, tokenAuthMW, rateLimitMiddleware)
+
+	// ----------------------------------------------------------------
+	// / — Vue SPA (only when frontend/dist exists; no-op otherwise)
+	// ----------------------------------------------------------------
+	mountFrontend(mux)
 
 	return mux
 }
@@ -640,4 +647,25 @@ func scimError(w http.ResponseWriter, status int, detail string) {
 
 func decodeScimBody(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// mountFrontend serves the built Vue SPA from frontend/dist when that
+// directory is present. Unknown paths fall through to index.html so that
+// client-side routing works. When the directory is absent (devcontainer,
+// unit tests) the handler is simply not registered and the mux returns 404
+// for unmatched paths.
+func mountFrontend(mux *http.ServeMux) {
+	const dist = "frontend/dist"
+	if _, err := os.Stat(dist); os.IsNotExist(err) {
+		return
+	}
+	fs := http.FileServer(http.Dir(dist))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := filepath.Join(dist, filepath.Clean("/"+r.URL.Path))
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			http.ServeFile(w, r, filepath.Join(dist, "index.html"))
+			return
+		}
+		fs.ServeHTTP(w, r)
+	})
 }

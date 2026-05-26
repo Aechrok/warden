@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.dev — used by docker-compose.local.yml (make up).
+# Builds the Go binary and the Vue frontend, then packages them in a
+# lightweight Alpine image. Not for production use.
+
+FROM golang:1.26-alpine AS go-builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /warden ./cmd/server
+
+FROM node:22-alpine AS node-builder
+WORKDIR /frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ .
+RUN npm run build
+
+FROM alpine:3.21
+RUN addgroup -S warden && adduser -S -G warden warden
+COPY --from=go-builder /warden /warden
+COPY --from=node-builder /frontend/dist /frontend/dist
+COPY internal/db/migrations /internal/db/migrations
+USER warden
+EXPOSE 8080
+ENTRYPOINT ["/warden"]

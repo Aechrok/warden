@@ -37,6 +37,39 @@ jobs:
         env:
           DATABASE_URL: postgres://warden:warden@localhost:5432/warden?sslmode=disable
 
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: warden
+          POSTGRES_PASSWORD: warden
+          POSTGRES_DB: warden
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 10
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26" }
+      - run: go test ./... -coverprofile=coverage.out -covermode=atomic -timeout=180s
+        env:
+          DATABASE_URL: postgres://warden:warden@localhost:5432/warden?sslmode=disable
+      - run: go tool cover -func=coverage.out | tail -1
+
+  playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd frontend && npm ci && npx playwright install --with-deps chromium
+      - run: cd frontend && npx playwright test
+
   build:
     runs-on: ubuntu-latest
     steps:

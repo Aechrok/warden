@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aechrok/warden/internal/auth"
 )
 
 type tokenCtxKey struct{}
@@ -22,9 +24,11 @@ type TokenClaims struct {
 }
 
 // TokenAuth reads the Authorization: Bearer <token> header, validates the
-// token against the api_tokens table, touches last_used, and stores
-// *TokenClaims in the context. Returns 401 if invalid or expired.
+// token against the api_tokens table, verifies the token owner is an active
+// user, touches last_used, and stores *TokenClaims in the context. Returns
+// 401 if invalid, expired, or the owner is inactive.
 func TokenAuth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	users := auth.NewUserStore()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := r.Header.Get("Authorization")
@@ -56,6 +60,14 @@ func TokenAuth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 			if expiresAt != nil && time.Now().After(*expiresAt) {
 				http.Error(w, `{"error":"token expired"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Security: verify the token owner's account is still active.
+			// A deactivated user must not be able to use a previously-issued token.
+			u, err := users.GetByID(r.Context(), pool, userID)
+			if err != nil || !u.IsActive {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return
 			}
 

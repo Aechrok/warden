@@ -2,9 +2,12 @@
   <div>
     <h1 class="text-2xl font-bold mb-4" style="color: var(--text-primary);">Break Glass</h1>
 
-    <!-- Alert banner -->
-    <div class="flex items-start gap-3 px-4 py-3 rounded-xl mb-6 bg-red-500/10 border border-red-500/30">
-      <span class="text-red-500 text-lg flex-shrink-0">⚠</span>
+    <!-- Alert banner — role="alert" so screen readers announce it on mount -->
+    <div
+      role="alert"
+      class="flex items-start gap-3 px-4 py-3 rounded-xl mb-6 bg-red-500/10 border border-red-500/30"
+    >
+      <span aria-hidden="true" class="text-red-500 text-lg flex-shrink-0">⚠</span>
       <div>
         <div class="font-semibold text-sm text-red-500">Emergency Override</div>
         <div class="text-sm text-red-400 mt-0.5">
@@ -24,8 +27,9 @@
       <div class="space-y-4">
         <div class="grid sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Instance *</label>
+            <label for="bg-instance" class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Instance *</label>
             <select
+              id="bg-instance"
               v-model="form.instance_id"
               class="w-full rounded-lg px-3 py-2 text-sm"
               style="background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary);"
@@ -37,8 +41,9 @@
           </div>
 
           <div>
-            <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Action *</label>
+            <label for="bg-action" class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Action *</label>
             <select
+              id="bg-action"
               v-model="form.action_key"
               class="w-full rounded-lg px-3 py-2 text-sm"
               style="background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary);"
@@ -52,8 +57,9 @@
         </div>
 
         <div>
-          <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Target Email *</label>
+          <label for="bg-target-email" class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Target Email *</label>
           <input
+            id="bg-target-email"
             v-model="form.target_email"
             type="email"
             placeholder="target@example.com"
@@ -63,26 +69,39 @@
         </div>
 
         <div>
-          <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">
+          <label for="bg-reason" class="block text-sm font-medium mb-1" style="color: var(--text-primary);">
             Reason * (minimum 20 characters)
           </label>
           <textarea
+            id="bg-reason"
             v-model="form.reason"
             rows="4"
             placeholder="Describe the emergency situation and why break-glass access is required..."
             class="w-full rounded-lg px-3 py-2 text-sm resize-none"
             style="background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary);"
+            :aria-describedby="'bg-reason-hint'"
           />
-          <div class="text-xs mt-1" :style="form.reason.length < 20 ? 'color: var(--danger)' : 'color: var(--text-muted)'">
+          <!-- aria-live so screen readers announce the count as the user types;
+               ✗/✓ icon provides a non-colour indicator satisfying 1.4.1 -->
+          <div
+            id="bg-reason-hint"
+            class="text-xs mt-1 flex items-center gap-1"
+            role="status"
+            aria-live="polite"
+            :style="form.reason.length < 20 ? 'color: var(--danger)' : 'color: var(--text-muted)'"
+          >
+            <span aria-hidden="true">{{ form.reason.length < 20 ? '✗' : '✓' }}</span>
             {{ form.reason.length }}/20 characters minimum
           </div>
         </div>
 
         <ErrorBanner :message="formError" />
 
+        <!-- bg-red-600 (#dc2626) gives ~4.65:1 with white — passes AA for normal text -->
         <button
-          class="w-full py-3 rounded-xl text-white font-semibold text-sm bg-red-500 hover:bg-red-600 active:bg-red-700 transition-colors"
+          class="w-full py-3 rounded-xl text-white font-semibold text-sm bg-red-600 hover:bg-red-700 active:bg-red-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="!isFormValid || submitting"
+          :aria-disabled="!isFormValid || submitting"
           @click="showConfirm = true"
         >
           <span v-if="submitting">Invoking...</span>
@@ -97,8 +116,9 @@
         <h2 class="font-semibold" style="color: var(--text-primary);">Incident History</h2>
       </div>
 
-      <div v-if="incidentsLoading" class="py-8 flex items-center justify-center">
-        <div class="animate-spin w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent"></div>
+      <div v-if="incidentsLoading" class="py-8 flex items-center justify-center" role="status" aria-label="Loading incidents">
+        <div class="animate-spin w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent" aria-hidden="true"></div>
+        <span class="sr-only">Loading incidents...</span>
       </div>
 
       <div v-else-if="incidents.length === 0" class="py-8 text-center text-sm rounded-xl"
@@ -159,21 +179,29 @@
       @confirm="invokeBreakGlass"
     />
 
-    <!-- Review modal -->
+    <!-- Review modal — role="dialog" with focus trap and Esc to close -->
     <Teleport to="body">
       <div
         v-if="reviewModal.open"
         class="fixed inset-0 z-40 flex items-center justify-center p-4"
         style="background: rgba(0,0,0,0.6);"
-        @click.self="reviewModal.open = false"
+        @click.self="closeReviewModal"
+        @keydown.esc.stop="closeReviewModal"
+        @keydown="trapFocus"
       >
         <div
+          ref="modalEl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="review-modal-title"
+          tabindex="-1"
           class="w-full max-w-md rounded-2xl p-6 shadow-2xl"
           style="background: var(--card); border: 1px solid var(--border);"
         >
-          <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Review Incident</h2>
-          <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Review Note</label>
+          <h2 id="review-modal-title" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Review Incident</h2>
+          <label for="review-note" class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Review Note</label>
           <textarea
+            id="review-note"
             v-model="reviewModal.note"
             rows="4"
             class="w-full rounded-lg px-3 py-2 text-sm resize-none mb-4"
@@ -183,7 +211,7 @@
             <button
               class="flex-1 px-4 py-2 rounded-lg text-sm"
               style="background: var(--border); color: var(--text-primary);"
-              @click="reviewModal.open = false"
+              @click="closeReviewModal"
             >
               Cancel
             </button>
@@ -202,7 +230,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { invokeBreakGlass as apiInvoke, listIncidents, reviewIncident } from '../api/breakglass'
 import { listActions } from '../api/actions'
 import { listInstances } from '../api/admin'
@@ -236,6 +264,9 @@ const reviewModal = reactive({
   note: '',
   submitting: false,
 })
+
+const modalEl = ref<HTMLElement | null>(null)
+let lastFocusedEl: HTMLElement | null = null
 
 const filteredActions = computed(() =>
   allActions.value.filter((a) => !form.instance_id || a.instance_id === form.instance_id)
@@ -280,16 +311,50 @@ async function invokeBreakGlass() {
 }
 
 function openReview(incident: Incident) {
+  lastFocusedEl = document.activeElement as HTMLElement
   reviewModal.incidentId = incident.id
   reviewModal.note = ''
   reviewModal.open = true
+  nextTick(() => {
+    // Move focus into the dialog
+    modalEl.value?.focus()
+  })
+}
+
+function closeReviewModal() {
+  reviewModal.open = false
+  // Return focus to the element that opened the modal
+  lastFocusedEl?.focus()
+}
+
+function trapFocus(e: KeyboardEvent) {
+  if (!modalEl.value || e.key !== 'Tab') return
+  const focusable = Array.from(
+    modalEl.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  )
+  if (focusable.length === 0) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey) {
+    if (document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    }
+  } else {
+    if (document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
 }
 
 async function submitReview() {
   reviewModal.submitting = true
   try {
     await reviewIncident(reviewModal.incidentId, reviewModal.note)
-    reviewModal.open = false
+    closeReviewModal()
     toastStore.success('Incident reviewed')
     await loadIncidents()
   } catch {

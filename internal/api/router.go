@@ -32,7 +32,7 @@ func (s *Server) Handler() http.Handler {
 	sessionAuthMW := middleware.SessionAuth(s.sessions, s.users, s.pool)
 	tokenAuthMW := middleware.TokenAuth(s.pool)
 
-	authHandler := apiinternal.NewAuthHandler(s.auth, s.sessions, s.users, s.pool, s.secureCookies())
+	authHandler := apiinternal.NewAuthHandler(s.auth, s.sessions, s.users, s.pool, s.logger, s.secureCookies())
 
 	deps := &apiinternal.Deps{
 		Pool:       s.pool,
@@ -246,7 +246,7 @@ func mountInternal(mux *http.ServeMux, deps *apiinternal.Deps, s *Server, sessio
 	authMWs := []func(http.Handler) http.Handler{sessionAuth, rateLimitMW}
 
 	// Auth (no session required)
-	authHandler := apiinternal.NewAuthHandler(s.auth, s.sessions, s.users, s.pool, s.secureCookies())
+	authHandler := apiinternal.NewAuthHandler(s.auth, s.sessions, s.users, s.pool, s.logger, s.secureCookies())
 	mux.Handle("/api/v1/internal/auth/login", apply(http.HandlerFunc(authHandler.Login), rateLimitMW))
 	mux.Handle("/api/v1/internal/auth/logout", apply(http.HandlerFunc(deps.Logout), sessionAuth, rateLimitMW))
 

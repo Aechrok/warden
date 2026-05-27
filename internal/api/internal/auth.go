@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/aechrok/warden/internal/auth"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,16 +23,18 @@ type AuthHandler struct {
 	sessions *auth.SessionStore
 	users    *auth.UserStore
 	pool     *pgxpool.Pool
+	logger   *zap.Logger
 	secure   bool
 }
 
 // NewAuthHandler constructs the OIDC auth handler.
-func NewAuthHandler(provider *auth.Provider, sessions *auth.SessionStore, users *auth.UserStore, pool *pgxpool.Pool, secure bool) *AuthHandler {
+func NewAuthHandler(provider *auth.Provider, sessions *auth.SessionStore, users *auth.UserStore, pool *pgxpool.Pool, logger *zap.Logger, secure bool) *AuthHandler {
 	return &AuthHandler{
 		provider: provider,
 		sessions: sessions,
 		users:    users,
 		pool:     pool,
+		logger:   logger,
 		secure:   secure,
 	}
 }
@@ -38,7 +42,7 @@ func NewAuthHandler(provider *auth.Provider, sessions *auth.SessionStore, users 
 // Login redirects to the OIDC authorization endpoint.
 // POST /api/v1/internal/auth/login  (no auth required)
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	authURL := h.provider.AuthURL("warden-state", "warden-nonce")
+	authURL := h.provider.AuthURL("warden-state", "")
 	if authURL == "" {
 		http.Error(w, `{"error":"OIDC not configured"}`, http.StatusInternalServerError)
 		return
@@ -58,6 +62,7 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	tokens, err := h.provider.Exchange(r.Context(), code, "")
 	if err != nil {
+		h.logger.Error("auth: OIDC exchange failed", zap.Error(err))
 		http.Error(w, `{"error":"authentication failed"}`, http.StatusUnauthorized)
 		return
 	}

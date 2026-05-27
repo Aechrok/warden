@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/aechrok/warden/internal/auth"
+	"github.com/aechrok/warden/internal/rbac"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -78,6 +79,10 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
+	}
+
+	if err := rbac.BootstrapFirstAdmin(r.Context(), tx, user.ID); err != nil {
+		h.logger.Warn("auth: bootstrap admin check failed", zap.Error(err))
 	}
 
 	sessionToken, err := h.sessions.Create(r.Context(), tx, user.ID, sessionTTL)

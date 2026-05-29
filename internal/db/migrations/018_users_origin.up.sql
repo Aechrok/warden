@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN origin TEXT NOT NULL DEFAULT 'oidc';

@@ -42,17 +42,14 @@ type Provider struct {
 }
 
 // NewProvider discovers the OIDC issuer's metadata and constructs a relying
-// party. The redirect URL is read from OIDC_REDIRECT_URL or defaulted to
-// /auth/callback on the server port.
+// party. Returns nil, nil when OIDC is not configured — callers must handle a
+// nil provider (local-password auth still works without it).
 func NewProvider(ctx context.Context, cfg *config.Config) (*Provider, error) {
 	if cfg == nil {
 		return nil, errors.New("auth: nil config")
 	}
-	if strings.TrimSpace(cfg.OIDCIssuer) == "" {
-		return nil, errors.New("auth: OIDC_ISSUER is required")
-	}
-	if strings.TrimSpace(cfg.OIDCClientID) == "" {
-		return nil, errors.New("auth: OIDC_CLIENT_ID is required")
+	if strings.TrimSpace(cfg.OIDCIssuer) == "" || strings.TrimSpace(cfg.OIDCClientID) == "" {
+		return nil, nil
 	}
 
 	redirectURL := strings.TrimSpace(cfg.OIDCRedirectURL)

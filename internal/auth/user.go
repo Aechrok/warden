@@ -50,6 +50,7 @@ func (s *UserStore) GetOrCreate(ctx context.Context, tx pgx.Tx, email, name stri
 		id        uuid.UUID
 		dbName    string
 		isActive  bool
+		origin    string
 		createdAt time.Time
 		updatedAt time.Time
 	)
@@ -61,8 +62,8 @@ func (s *UserStore) GetOrCreate(ctx context.Context, tx pgx.Tx, email, name stri
 		ON CONFLICT (email) DO UPDATE
 		  SET name       = CASE WHEN users.name <> EXCLUDED.name THEN EXCLUDED.name ELSE users.name END,
 		      updated_at = CASE WHEN users.name <> EXCLUDED.name THEN now() ELSE users.updated_at END
-		RETURNING id, name, is_active, created_at, updated_at
-	`, email, name).Scan(&id, &dbName, &isActive, &createdAt, &updatedAt)
+		RETURNING id, name, is_active, COALESCE(origin, ''), created_at, updated_at
+	`, email, name).Scan(&id, &dbName, &isActive, &origin, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("auth: user upsert: %w", err)
 	}
@@ -72,6 +73,7 @@ func (s *UserStore) GetOrCreate(ctx context.Context, tx pgx.Tx, email, name stri
 		Email:     email,
 		Name:      dbName,
 		IsActive:  isActive,
+		Origin:    origin,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}, nil
@@ -87,10 +89,10 @@ func (s *UserStore) GetByID(ctx context.Context, pool *pgxpool.Pool, id uuid.UUI
 	}
 	u := &domain.User{}
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, is_active, created_at, updated_at
+		SELECT id, email, name, is_active, COALESCE(origin, ''), created_at, updated_at
 		FROM users
 		WHERE id = $1
-	`, id).Scan(&u.ID, &u.Email, &u.Name, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+	`, id).Scan(&u.ID, &u.Email, &u.Name, &u.IsActive, &u.Origin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -111,10 +113,10 @@ func (s *UserStore) GetByEmail(ctx context.Context, pool *pgxpool.Pool, email st
 	}
 	u := &domain.User{}
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, is_active, created_at, updated_at
+		SELECT id, email, name, is_active, COALESCE(origin, ''), created_at, updated_at
 		FROM users
 		WHERE email = $1
-	`, email).Scan(&u.ID, &u.Email, &u.Name, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+	`, email).Scan(&u.ID, &u.Email, &u.Name, &u.IsActive, &u.Origin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound

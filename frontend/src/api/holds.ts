@@ -1,8 +1,8 @@
 import { apiFetch } from './client'
-import type { Hold, HoldDetailResponse } from './types'
+import type { Hold, HoldEnriched, HoldDetailResponse } from './types'
 
-export async function listHolds(): Promise<Hold[]> {
-  const res = await apiFetch<{ holds: Hold[] }>('/api/v1/internal/holds/')
+export async function listHolds(): Promise<HoldEnriched[]> {
+  const res = await apiFetch<{ holds: HoldEnriched[] }>('/api/v1/internal/holds/')
   return res.holds ?? []
 }
 
@@ -11,6 +11,7 @@ export async function createHold(data: {
   description: string
   template_id?: string
   expires_at?: string
+  custodian_emails?: string[]
 }): Promise<Hold> {
   const res = await apiFetch<{ hold: Hold }>('/api/v1/internal/holds/', {
     method: 'POST',

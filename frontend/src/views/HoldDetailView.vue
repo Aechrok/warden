@@ -28,7 +28,7 @@
               {{ hold.description }}
             </p>
             <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs" style="color: var(--text-muted);">
-              <span>Placed by <strong style="color: var(--text-primary);">{{ hold.placed_by }}</strong></span>
+              <span>Placed by <strong style="color: var(--text-primary);">{{ placedByName || hold.placed_by || 'Unknown' }}</strong></span>
               <span>Created {{ formatDate(hold.created_at) }}</span>
               <span v-if="hold.expires_at">Expires {{ formatDate(hold.expires_at) }}</span>
               <span v-if="hold.released_at">Released {{ formatDate(hold.released_at) }}</span>
@@ -93,15 +93,14 @@
                 {{ custodian.email }}
               </div>
               <div class="text-xs mt-0.5" style="color: var(--text-muted);">
-                Added {{ formatDate(custodian.added_at) }}
+                Added {{ formatDate(custodian.created_at) }}
               </div>
               <!-- Cascade states for this custodian -->
               <div class="flex flex-wrap gap-1 mt-1">
                 <StatusBadge
-                  v-for="cs in cascadeStatesFor(custodian.id)"
+                  v-for="cs in cascadeStatesFor(custodian.email)"
                   :key="cs.id"
                   :status="cs.status"
-                  :label="`${cs.provider}: ${cs.status}`"
                 />
               </div>
             </div>
@@ -184,6 +183,7 @@ const toastStore = useToastStore()
 const holdId = route.params.id as string
 
 const hold = ref<Hold | null>(null)
+const placedByName = ref('')
 const custodians = ref<Custodian[]>([])
 const cascadeStates = ref<CascadeState[]>([])
 const loading = ref(false)
@@ -198,8 +198,8 @@ const releaseReason = ref('')
 const releasing = ref(false)
 const releaseError = ref<string | null>(null)
 
-function cascadeStatesFor(custodianId: string): CascadeState[] {
-  return cascadeStates.value.filter((cs) => cs.custodian_id === custodianId)
+function cascadeStatesFor(email: string): CascadeState[] {
+  return cascadeStates.value.filter((cs) => cs.custodian_email === email)
 }
 
 async function loadHold() {
@@ -208,6 +208,7 @@ async function loadHold() {
   try {
     const data = await getHold(holdId)
     hold.value = data.hold
+    placedByName.value = data.placed_by_name ?? ''
     custodians.value = data.custodians
     cascadeStates.value = data.cascade_states
   } catch (err) {

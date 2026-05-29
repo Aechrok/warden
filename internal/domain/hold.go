@@ -36,6 +36,7 @@ type HoldTemplate struct {
 	BlockedActions []string   `json:"blocked_actions"`
 	ExpirationDays *int       `json:"expiration_days,omitempty"`
 	NotesTemplate  string     `json:"notes_template"`
+	IsDefault      bool       `json:"is_default"`
 	CreatedBy      *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`

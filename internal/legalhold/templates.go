@@ -16,12 +16,13 @@ import (
 
 // CreateTemplateParams carries fields required to create a hold template.
 type CreateTemplateParams struct {
-	Name               string
-	Description        string
-	ProviderGlob       string
-	BlockedActions     []string
-	NotesTemplate      string
-	ExpirationDays     *int
+	Name           string
+	Description    string
+	ProviderGlob   string
+	BlockedActions []string
+	NotesTemplate  string
+	ExpirationDays *int
+	IsDefault      bool
 }
 
 // CreateTemplate inserts a new hold template and emits a hold.updated event on
@@ -40,11 +41,20 @@ func (s *Service) CreateTemplate(
 		params.ProviderGlob = "*"
 	}
 
+	if params.BlockedActions == nil {
+		params.BlockedActions = []string{}
+	}
+	if params.IsDefault {
+		if _, err := tx.Exec(ctx, `UPDATE hold_templates SET is_default = false WHERE is_default = true`); err != nil {
+			return nil, fmt.Errorf("legalhold: clear default template: %w", err)
+		}
+	}
+
 	tpl := &domain.HoldTemplate{}
 	err := tx.QueryRow(ctx, `
-		INSERT INTO hold_templates (name, description, provider_glob, blocked_actions, notes_template, expiration_days, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, name, description, provider_glob, blocked_actions, expiration_days, notes_template, created_by, created_at, updated_at
+		INSERT INTO hold_templates (name, description, provider_glob, blocked_actions, notes_template, expiration_days, is_default, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, COALESCE(description, ''), provider_glob, blocked_actions, expiration_days, COALESCE(notes_template, ''), is_default, created_by, created_at, updated_at
 	`,
 		params.Name,
 		nullText(params.Description),
@@ -52,6 +62,7 @@ func (s *Service) CreateTemplate(
 		params.BlockedActions,
 		nullText(params.NotesTemplate),
 		params.ExpirationDays,
+		params.IsDefault,
 		nullUUID(actor.ID),
 	).Scan(
 		&tpl.ID,
@@ -61,6 +72,7 @@ func (s *Service) CreateTemplate(
 		&tpl.BlockedActions,
 		&tpl.ExpirationDays,
 		&tpl.NotesTemplate,
+		&tpl.IsDefault,
 		&tpl.CreatedBy,
 		&tpl.CreatedAt,
 		&tpl.UpdatedAt,
@@ -69,8 +81,7 @@ func (s *Service) CreateTemplate(
 		return nil, fmt.Errorf("legalhold: create template: %w", err)
 	}
 
-	if err := s.appendEvent(ctx, tx, domain.AggregateHold, tpl.ID, domain.EventHoldUpdated, actor, map[string]any{
-		"action":      "template_created",
+	if err := s.appendEvent(ctx, tx, domain.AggregateHoldTemplate, tpl.ID, domain.EventHoldTemplateCreated, actor, map[string]any{
 		"template_id": tpl.ID,
 		"name":        tpl.Name,
 	}); err != nil {
@@ -84,12 +95,12 @@ func (s *Service) CreateTemplate(
 func (s *Service) GetTemplate(ctx context.Context, pool *pgxpool.Pool, templateID uuid.UUID) (*domain.HoldTemplate, error) {
 	tpl := &domain.HoldTemplate{}
 	err := pool.QueryRow(ctx, `
-		SELECT id, name, description, provider_glob, blocked_actions, expiration_days, notes_template, created_by, created_at, updated_at
+		SELECT id, name, COALESCE(description, ''), provider_glob, blocked_actions, expiration_days, COALESCE(notes_template, ''), is_default, created_by, created_at, updated_at
 		FROM hold_templates WHERE id = $1
 	`, templateID).Scan(
 		&tpl.ID, &tpl.Name, &tpl.Description, &tpl.ProviderGlob,
 		&tpl.BlockedActions, &tpl.ExpirationDays, &tpl.NotesTemplate,
-		&tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
+		&tpl.IsDefault, &tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -100,12 +111,12 @@ func (s *Service) GetTemplate(ctx context.Context, pool *pgxpool.Pool, templateI
 	return tpl, nil
 }
 
-// ListTemplates returns all hold templates, sorted by name.
+// ListTemplates returns all hold templates, default first then alphabetically.
 func (s *Service) ListTemplates(ctx context.Context, pool *pgxpool.Pool) ([]*domain.HoldTemplate, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, name, description, provider_glob, blocked_actions, expiration_days, notes_template, created_by, created_at, updated_at
+		SELECT id, name, COALESCE(description, ''), provider_glob, blocked_actions, expiration_days, COALESCE(notes_template, ''), is_default, created_by, created_at, updated_at
 		FROM hold_templates
-		ORDER BY name ASC
+		ORDER BY is_default DESC, name ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("legalhold: list templates: %w", err)
@@ -118,7 +129,7 @@ func (s *Service) ListTemplates(ctx context.Context, pool *pgxpool.Pool) ([]*dom
 		if err := rows.Scan(
 			&tpl.ID, &tpl.Name, &tpl.Description, &tpl.ProviderGlob,
 			&tpl.BlockedActions, &tpl.ExpirationDays, &tpl.NotesTemplate,
-			&tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
+			&tpl.IsDefault, &tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("legalhold: scan template: %w", err)
 		}
@@ -138,6 +149,7 @@ type UpdateTemplateParams struct {
 	BlockedActions []string
 	NotesTemplate  string
 	ExpirationDays *int
+	IsDefault      bool
 }
 
 // UpdateTemplate replaces the mutable fields of an existing template.
@@ -155,6 +167,15 @@ func (s *Service) UpdateTemplate(
 		params.ProviderGlob = "*"
 	}
 
+	if params.BlockedActions == nil {
+		params.BlockedActions = []string{}
+	}
+	if params.IsDefault {
+		if _, err := tx.Exec(ctx, `UPDATE hold_templates SET is_default = false WHERE is_default = true AND id <> $1`, templateID); err != nil {
+			return nil, fmt.Errorf("legalhold: clear default template: %w", err)
+		}
+	}
+
 	tpl := &domain.HoldTemplate{}
 	err := tx.QueryRow(ctx, `
 		UPDATE hold_templates
@@ -164,9 +185,10 @@ func (s *Service) UpdateTemplate(
 		    blocked_actions = $5,
 		    notes_template  = $6,
 		    expiration_days = $7,
+		    is_default      = $8,
 		    updated_at      = now()
 		WHERE id = $1
-		RETURNING id, name, description, provider_glob, blocked_actions, expiration_days, notes_template, created_by, created_at, updated_at
+		RETURNING id, name, COALESCE(description, ''), provider_glob, blocked_actions, expiration_days, COALESCE(notes_template, ''), is_default, created_by, created_at, updated_at
 	`,
 		templateID,
 		params.Name,
@@ -175,10 +197,11 @@ func (s *Service) UpdateTemplate(
 		params.BlockedActions,
 		nullText(params.NotesTemplate),
 		params.ExpirationDays,
+		params.IsDefault,
 	).Scan(
 		&tpl.ID, &tpl.Name, &tpl.Description, &tpl.ProviderGlob,
 		&tpl.BlockedActions, &tpl.ExpirationDays, &tpl.NotesTemplate,
-		&tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
+		&tpl.IsDefault, &tpl.CreatedBy, &tpl.CreatedAt, &tpl.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -187,8 +210,7 @@ func (s *Service) UpdateTemplate(
 		return nil, fmt.Errorf("legalhold: update template: %w", err)
 	}
 
-	if err := s.appendEvent(ctx, tx, domain.AggregateHold, templateID, domain.EventHoldUpdated, actor, map[string]any{
-		"action":      "template_updated",
+	if err := s.appendEvent(ctx, tx, domain.AggregateHoldTemplate, templateID, domain.EventHoldTemplateUpdated, actor, map[string]any{
 		"template_id": templateID,
 		"name":        tpl.Name,
 	}); err != nil {
@@ -209,8 +231,7 @@ func (s *Service) DeleteTemplate(ctx context.Context, tx pgx.Tx, actor domain.Ac
 		return fmt.Errorf("legalhold: template %s not found", templateID)
 	}
 
-	if err := s.appendEvent(ctx, tx, domain.AggregateHold, templateID, domain.EventHoldUpdated, actor, map[string]any{
-		"action":      "template_deleted",
+	if err := s.appendEvent(ctx, tx, domain.AggregateHoldTemplate, templateID, domain.EventHoldTemplateDeleted, actor, map[string]any{
 		"template_id": templateID,
 	}); err != nil {
 		return err

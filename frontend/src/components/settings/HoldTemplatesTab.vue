@@ -26,17 +26,35 @@
         v-for="tpl in templates"
         :key="tpl.id"
         class="rounded-xl p-4 flex items-start justify-between gap-3"
-        style="background: var(--card); border: 1px solid var(--border);"
+        :style="tpl.is_default
+          ? 'background: var(--card); border: 1px solid var(--nav-active-bg);'
+          : 'background: var(--card); border: 1px solid var(--border);'"
       >
-        <div>
-          <div class="font-medium text-sm" style="color: var(--text-primary);">{{ tpl.name }}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap mb-0.5">
+            <span class="font-medium text-sm" style="color: var(--text-primary);">{{ tpl.name }}</span>
+            <span
+              v-if="tpl.is_default"
+              class="text-xs px-2 py-0.5 rounded-full font-medium"
+              style="background: var(--nav-active-bg); color: var(--nav-active-text);"
+            >Default</span>
+          </div>
           <div class="text-xs" style="color: var(--text-muted);">{{ tpl.description }}</div>
           <div class="text-xs mt-0.5" style="color: var(--text-muted);">
             Providers: <code class="font-mono">{{ tpl.provider_glob }}</code>
-            <span v-if="tpl.default_expiry_days"> · {{ tpl.default_expiry_days }} day default expiry</span>
+            <span v-if="tpl.expiration_days"> · {{ tpl.expiration_days }} day default expiry</span>
           </div>
         </div>
-        <div class="flex gap-2 flex-shrink-0">
+        <div class="flex gap-2 flex-shrink-0 items-center">
+          <button
+            v-if="!tpl.is_default"
+            class="text-xs px-3 py-1.5 rounded-lg"
+            style="background: var(--border); color: var(--text-muted);"
+            :disabled="settingDefault"
+            @click="setDefault(tpl)"
+          >
+            Set default
+          </button>
           <button
             class="text-xs px-3 py-1.5 rounded-lg"
             style="background: var(--border); color: var(--text-primary);"
@@ -89,10 +107,23 @@
             </div>
             <div>
               <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Default Expiry (days)</label>
-              <input v-model.number="form.default_expiry_days" type="number" min="1"
+              <input v-model.number="form.expiration_days" type="number" min="1"
                 class="w-full rounded-lg px-3 py-2 text-sm"
                 style="background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary);" />
             </div>
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+              <div
+                class="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
+                :style="form.is_default ? 'background: var(--nav-active-bg);' : 'background: var(--border);'"
+                @click="form.is_default = !form.is_default"
+              >
+                <span
+                  class="absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                  :style="form.is_default ? 'transform: translateX(16px);' : ''"
+                ></span>
+              </div>
+              <span class="text-sm font-medium" style="color: var(--text-primary);">Set as default template</span>
+            </label>
           </div>
 
           <div class="flex gap-3 mt-6">
@@ -124,13 +155,15 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const showModal = ref(false)
 const saving = ref(false)
+const settingDefault = ref(false)
 const editingId = ref<string | null>(null)
 
 const form = reactive({
   name: '',
   description: '',
   provider_glob: '*',
-  default_expiry_days: 0,
+  expiration_days: 0,
+  is_default: false,
 })
 
 function openCreate() {
@@ -138,7 +171,8 @@ function openCreate() {
   form.name = ''
   form.description = ''
   form.provider_glob = '*'
-  form.default_expiry_days = 0
+  form.expiration_days = 0
+  form.is_default = false
   showModal.value = true
 }
 
@@ -147,8 +181,28 @@ function openEdit(tpl: HoldTemplate) {
   form.name = tpl.name
   form.description = tpl.description
   form.provider_glob = tpl.provider_glob
-  form.default_expiry_days = tpl.default_expiry_days ?? 0
+  form.expiration_days = tpl.expiration_days ?? 0
+  form.is_default = tpl.is_default
   showModal.value = true
+}
+
+async function setDefault(tpl: HoldTemplate) {
+  settingDefault.value = true
+  try {
+    await updateHoldTemplate(tpl.id, {
+      name: tpl.name,
+      description: tpl.description,
+      provider_glob: tpl.provider_glob,
+      expiration_days: tpl.expiration_days,
+      is_default: true,
+    })
+    await loadTemplates()
+    toastStore.success(`"${tpl.name}" set as default`)
+  } catch {
+    toastStore.error('Failed to set default template')
+  } finally {
+    settingDefault.value = false
+  }
 }
 
 async function save() {
@@ -158,7 +212,8 @@ async function save() {
       name: form.name,
       description: form.description,
       provider_glob: form.provider_glob,
-      default_expiry_days: form.default_expiry_days || undefined,
+      expiration_days: form.expiration_days || undefined,
+      is_default: form.is_default,
     }
     if (editingId.value) {
       await updateHoldTemplate(editingId.value, data)

@@ -11,14 +11,15 @@ import (
 type AggregateType string
 
 const (
-	AggregateHold        AggregateType = "hold"
-	AggregateCustodian   AggregateType = "custodian"
-	AggregateUser        AggregateType = "user"
-	AggregateInstance    AggregateType = "instance"
-	AggregateAction      AggregateType = "action"
-	AggregateApproval    AggregateType = "approval"
-	AggregateBreakGlass  AggregateType = "breakglass"
-	AggregateIdentity    AggregateType = "identity"
+	AggregateHold         AggregateType = "hold"
+	AggregateHoldTemplate AggregateType = "hold_template"
+	AggregateCustodian    AggregateType = "custodian"
+	AggregateUser         AggregateType = "user"
+	AggregateInstance     AggregateType = "instance"
+	AggregateAction       AggregateType = "action"
+	AggregateApproval     AggregateType = "approval"
+	AggregateBreakGlass   AggregateType = "breakglass"
+	AggregateIdentity     AggregateType = "identity"
 )
 
 // Event type string constants. Event names are stable strings; never rename
@@ -52,6 +53,11 @@ const (
 	EventApprovalRequested = "approval.requested"
 	EventApprovalDecided   = "approval.decided"
 	EventApprovalExpired   = "approval.expired"
+
+	// Hold template lifecycle
+	EventHoldTemplateCreated = "hold_template.created"
+	EventHoldTemplateUpdated = "hold_template.updated"
+	EventHoldTemplateDeleted = "hold_template.deleted"
 )
 
 // Event is an immutable, append-only fact about an aggregate. Once written,

@@ -20,6 +20,8 @@ import (
 
 	"github.com/aechrok/warden/internal/api"
 	"github.com/aechrok/warden/internal/config"
+	"github.com/aechrok/warden/internal/debug"
+	"github.com/aechrok/warden/internal/pbac"
 	"github.com/aechrok/warden/internal/rbac"
 
 	// Blank imports register every integration plugin via init().
@@ -56,7 +58,17 @@ func run(logger *zap.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("parse db config: %w", err)
+	}
+	var dbgTracer *debug.Tracer
+	if os.Getenv("WARDEN_DEBUG") == "true" {
+		dbgTracer = new(debug.Tracer)
+		poolCfg.ConnConfig.Tracer = dbgTracer
+		logger.Info("warden: debug mode enabled")
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return fmt.Errorf("open db pool: %w", err)
 	}
@@ -76,7 +88,12 @@ func run(logger *zap.Logger) error {
 	}
 	logger.Info("warden: built-in roles seeded")
 
-	srv, err := api.NewServer(ctx, pool, cfg, logger)
+	if err := pbac.SeedPolicies(ctx, pool); err != nil {
+		return fmt.Errorf("pbac seed: %w", err)
+	}
+	logger.Info("warden: pbac policies seeded")
+
+	srv, err := api.NewServer(ctx, pool, cfg, logger, dbgTracer)
 	if err != nil {
 		return fmt.Errorf("api server init: %w", err)
 	}

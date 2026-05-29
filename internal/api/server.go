@@ -18,6 +18,7 @@ import (
 	"github.com/aechrok/warden/internal/auth"
 	"github.com/aechrok/warden/internal/breakglass"
 	"github.com/aechrok/warden/internal/config"
+	"github.com/aechrok/warden/internal/debug"
 	"github.com/aechrok/warden/internal/legalhold"
 	"github.com/aechrok/warden/internal/pbac"
 	"github.com/aechrok/warden/internal/plugin"
@@ -41,12 +42,14 @@ type Server struct {
 	breakglass  *breakglass.Service
 	eventStore  *store.EventStore
 	riverClient *river.Client[pgx.Tx]
+	debugTracer *debug.Tracer
 }
 
 // NewServer constructs and wires every service layer. It starts the River
 // client (background job processing) before returning. The caller should
 // cancel ctx (or call river.Client.Stop) during shutdown.
-func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *zap.Logger) (*Server, error) {
+// debugTracer may be nil; when non-nil the debug stats endpoint is mounted.
+func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *zap.Logger, debugTracer *debug.Tracer) (*Server, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("api: nil pool")
 	}
@@ -57,6 +60,7 @@ func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logg
 		return nil, fmt.Errorf("api: nil logger")
 	}
 
+	// authProvider is nil when OIDC env vars are absent; local-password auth works without it.
 	authProvider, err := auth.NewProvider(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("api: oidc provider: %w", err)
@@ -64,9 +68,10 @@ func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logg
 
 	eventStore := store.NewEventStore()
 	outboxStore := store.NewOutboxStore()
-	registry := plugin.NewRegistry()
+	// nil registry falls back to the global populated by plugin init() funcs.
 	resolver := plugin.NewCredentialResolver(pool, cfg.EncryptionKey)
-	dispatcher := plugin.NewDispatcher(registry, resolver, pool)
+	dispatcher := plugin.NewDispatcher(nil, resolver, pool)
+	registry := plugin.GlobalRegistry()
 
 	// Install River's own schema (river_job, river_queue, river_leader, etc.)
 	// before constructing the client. Idempotent — safe to call on every boot.
@@ -111,6 +116,7 @@ func NewServer(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logg
 		breakglass:  bgSvc,
 		eventStore:  eventStore,
 		riverClient: riverClient,
+		debugTracer: debugTracer,
 	}
 
 	if err := riverClient.Start(ctx); err != nil {

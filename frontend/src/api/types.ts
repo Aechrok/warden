@@ -5,6 +5,7 @@ export interface User {
   email: string
   name: string
   is_active: boolean
+  origin: string
 }
 
 export interface MeResponse {
@@ -16,17 +17,17 @@ export interface MeResponse {
 // --- Identity ---
 
 export interface Identity {
-  id: string
   email: string
   display_name: string
   instance_id: string
-  provider: string
-  status: string
-  raw?: Record<string, unknown>
+  instance_name: string
+  data?: Record<string, unknown>
+  fetched_at?: string
 }
 
 export interface IdentitySearchResponse {
   identities: Identity[]
+  on_hold: boolean
 }
 
 // --- Actions ---
@@ -39,6 +40,7 @@ export interface ActionDef {
   plugin: string
   destructive: boolean
   params?: ActionParam[]
+  applicable_states?: string[]
 }
 
 export interface ActionParam {
@@ -70,7 +72,7 @@ export interface Hold {
   description: string
   status: 'active' | 'released' | 'expired'
   template_id?: string
-  placed_by: string
+  placed_by?: string
   created_at: string
   released_at?: string
   expires_at?: string
@@ -80,23 +82,34 @@ export interface Custodian {
   id: string
   hold_id: string
   email: string
-  added_at: string
-  added_by: string
+  added_by?: string
+  created_at: string
 }
+
+export type CascadeStatus = 'pending' | 'in_progress' | 'completed' | 'partial' | 'failed'
 
 export interface CascadeState {
   id: string
   hold_id: string
-  custodian_id: string
-  provider: string
+  custodian_email: string
   instance_id: string
-  status: 'pending' | 'placed' | 'failed' | 'released'
-  last_updated: string
-  error?: string
+  status: CascadeStatus
+  last_error?: string
+  attempts: number
+  completed_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface HoldEnriched extends Hold {
+  placed_by_name?: string
+  custodians: Custodian[]
+  cascade_states: CascadeState[]
 }
 
 export interface HoldDetailResponse {
   hold: Hold
+  placed_by_name?: string
   custodians: Custodian[]
   cascade_states: CascadeState[]
 }
@@ -106,7 +119,8 @@ export interface HoldTemplate {
   name: string
   description: string
   provider_glob: string
-  default_expiry_days?: number
+  expiration_days?: number
+  is_default: boolean
   created_at: string
 }
 
@@ -116,10 +130,12 @@ export interface AuditEvent {
   id: string
   aggregate_type: string
   aggregate_id: string
-  event_type: string
-  actor_email: string
-  actor_id: string
-  occurred_at: string
+  version: number
+  type: string
+  actor_id?: string
+  actor_type?: string
+  actor_display?: string
+  created_at: string
   payload?: Record<string, unknown>
 }
 
@@ -193,16 +209,42 @@ export interface CreateTokenRequest {
 export interface Instance {
   id: string
   name: string
-  plugin: string
-  enabled: boolean
+  plugin_id: string
+  is_active: boolean
   created_at: string
 }
 
+export interface CredentialField {
+  key: string
+  label: string
+  type: 'string' | 'json' | 'bool'
+  required: boolean
+  secret: boolean
+  description?: string
+}
+
+export interface PluginSchema {
+  id: string
+  name: string
+  schema: CredentialField[]
+}
+
 export interface Role {
+  id: string
   name: string
   description: string
+  is_builtin: boolean
   permissions: string[]
-  users?: RoleUser[]
+}
+
+export interface UserWithRoles {
+  id: string
+  email: string
+  name: string
+  is_active: boolean
+  origin: 'oidc' | 'scim'
+  roles: string[]
+  created_at: string
 }
 
 export interface RoleUser {
@@ -212,10 +254,23 @@ export interface RoleUser {
 }
 
 export interface PBACPolicy {
+  id: string
   name: string
-  description: string
-  enabled: boolean
+  policy_type: string
+  is_enabled: boolean
   config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface SCIMGroup {
+  id: string
+  external_id: string
+  name: string
+  role_id?: string
+  role_name?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface VIPIdentity {
@@ -223,4 +278,32 @@ export interface VIPIdentity {
   email: string
   reason: string
   created_at: string
+}
+
+export interface SSOConfig {
+  oidc_issuer: string
+  oidc_internal_issuer: string
+  oidc_client_id: string
+  has_secret: boolean
+  oidc_redirect_url: string
+  sso_enabled: boolean
+  enforce_sso: boolean
+  updated_at: string
+}
+
+export interface AuthConfig {
+  sso_enabled: boolean
+  enforce_sso: boolean
+}
+
+export interface Invitation {
+  id: string
+  token: string
+  email: string
+  role_name?: string
+  label: string
+  used_at?: string
+  expires_at: string
+  created_at: string
+  invited_by_email?: string
 }

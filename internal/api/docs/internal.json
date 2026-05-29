@@ -1,0 +1,1323 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Warden Internal API",
+    "description": "Session-cookie authenticated API for the Warden web UI. All endpoints (except auth) require a valid `warden_session` cookie obtained via `/auth/local`, `/auth/magic`, or the OIDC flow.",
+    "version": "1.0.0"
+  },
+  "servers": [{"url": "/api/v1/internal", "description": "Internal API"}],
+  "security": [{"sessionCookie": []}],
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "warden_session",
+        "description": "Session cookie set after successful login"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {"error": {"type": "string"}}
+      },
+      "Hold": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "status": {"type": "string", "enum": ["active", "released", "expired"]},
+          "placed_by": {"type": "string", "format": "uuid"},
+          "placed_by_name": {"type": "string"},
+          "template_id": {"type": "string", "format": "uuid"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "released_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "HoldEnriched": {
+        "allOf": [{"$ref": "#/components/schemas/Hold"}],
+        "properties": {
+          "custodians": {"type": "array", "items": {"$ref": "#/components/schemas/Custodian"}},
+          "cascade_states": {"type": "array", "items": {"$ref": "#/components/schemas/CascadeState"}}
+        }
+      },
+      "Custodian": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "hold_id": {"type": "string", "format": "uuid"},
+          "email": {"type": "string", "format": "email"},
+          "added_by": {"type": "string", "format": "uuid"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "CascadeState": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "hold_id": {"type": "string", "format": "uuid"},
+          "custodian_email": {"type": "string", "format": "email"},
+          "instance_id": {"type": "string", "format": "uuid"},
+          "status": {"type": "string", "enum": ["pending", "in_progress", "completed", "partial", "failed"]},
+          "last_error": {"type": "string"},
+          "attempts": {"type": "integer"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "HoldTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "provider_glob": {"type": "string", "example": "*"},
+          "blocked_actions": {"type": "array", "items": {"type": "string"}},
+          "notes_template": {"type": "string"},
+          "expiration_days": {"type": "integer"},
+          "is_default": {"type": "boolean"},
+          "created_by": {"type": "string", "format": "uuid"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "aggregate_type": {"type": "string"},
+          "aggregate_id": {"type": "string", "format": "uuid"},
+          "version": {"type": "integer"},
+          "type": {"type": "string"},
+          "actor_id": {"type": "string", "format": "uuid"},
+          "actor_type": {"type": "string"},
+          "actor_display": {"type": "string"},
+          "payload": {"type": "object"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Approval": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "action_key": {"type": "string"},
+          "instance_id": {"type": "string", "format": "uuid"},
+          "target_email": {"type": "string"},
+          "requested_by": {"type": "string"},
+          "status": {"type": "string", "enum": ["pending", "approved", "rejected", "expired"]},
+          "review_note": {"type": "string"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "reviewed_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Role": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "is_builtin": {"type": "boolean"},
+          "permissions": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "email": {"type": "string", "format": "email"},
+          "name": {"type": "string"},
+          "is_active": {"type": "boolean"},
+          "origin": {"type": "string", "enum": ["local", "oidc", "scim"]},
+          "roles": {"type": "array", "items": {"type": "string"}},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Instance": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "plugin_id": {"type": "string"},
+          "is_active": {"type": "boolean"},
+          "last_health_ok": {"type": "boolean"},
+          "last_health_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Token": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "scopes": {"type": "array", "items": {"type": "string"}},
+          "last_used": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PBACPolicy": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "policy_type": {"type": "string"},
+          "is_enabled": {"type": "boolean"},
+          "config": {"type": "object"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  },
+  "paths": {
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Get current user",
+        "tags": ["Auth"],
+        "responses": {
+          "200": {
+            "description": "Current session user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {"$ref": "#/components/schemas/User"}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"description": "Not authenticated"}
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "oidcLogin",
+        "summary": "Initiate OIDC login",
+        "description": "Redirects to the configured OIDC provider. Requires SSO to be configured.",
+        "tags": ["Auth"],
+        "security": [],
+        "responses": {
+          "302": {"description": "Redirect to OIDC authorization endpoint"},
+          "501": {"description": "SSO not configured"}
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "summary": "Log out",
+        "tags": ["Auth"],
+        "responses": {
+          "200": {"description": "Session cleared"},
+          "401": {"description": "Not authenticated"}
+        }
+      }
+    },
+    "/holds/": {
+      "get": {
+        "operationId": "listHolds",
+        "summary": "List legal holds (enriched)",
+        "description": "Returns all holds with their custodians and cascade states. Required permission: holds:read.",
+        "tags": ["Holds"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["active", "released", "expired"]},
+            "description": "Filter by status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Holds with enriched data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "holds": {"type": "array", "items": {"$ref": "#/components/schemas/HoldEnriched"}}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"description": "Not authenticated"},
+          "403": {"description": "Insufficient permission"}
+        }
+      },
+      "post": {
+        "operationId": "createHold",
+        "summary": "Create a legal hold",
+        "tags": ["Holds"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "description": {"type": "string"},
+                  "template_id": {"type": "string", "format": "uuid"},
+                  "expires_at": {"type": "string", "format": "date-time"},
+                  "custodian_emails": {"type": "array", "items": {"type": "string", "format": "email"}}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Hold created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hold": {"$ref": "#/components/schemas/Hold"},
+                    "failed_custodians": {"type": "array", "items": {"type": "string"}},
+                    "warning": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/holds/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "get": {
+        "operationId": "getHold",
+        "summary": "Get a single hold with custodians and cascade states",
+        "tags": ["Holds"],
+        "responses": {
+          "200": {
+            "description": "Hold detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hold": {"$ref": "#/components/schemas/Hold"},
+                    "placed_by_name": {"type": "string"},
+                    "custodians": {"type": "array", "items": {"$ref": "#/components/schemas/Custodian"}},
+                    "cascade_states": {"type": "array", "items": {"$ref": "#/components/schemas/CascadeState"}}
+                  }
+                }
+              }
+            }
+          },
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/holds/{id}/custodians": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "post": {
+        "operationId": "addCustodian",
+        "summary": "Add a custodian to a hold",
+        "tags": ["Holds"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {"email": {"type": "string", "format": "email"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Custodian added"},
+          "400": {"description": "Invalid email or hold not active"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Hold not found"}
+        }
+      }
+    },
+    "/holds/{id}/custodians/{custodianId}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}},
+        {"name": "custodianId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+      ],
+      "delete": {
+        "operationId": "removeCustodian",
+        "summary": "Remove a custodian from a hold",
+        "tags": ["Holds"],
+        "responses": {
+          "200": {"description": "Custodian removed"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Hold or custodian not found"}
+        }
+      }
+    },
+    "/holds/{id}/release": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "post": {
+        "operationId": "releaseHold",
+        "summary": "Release a legal hold",
+        "tags": ["Holds"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {"reason": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Hold released"},
+          "400": {"description": "Hold not active or reason missing"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Hold not found"}
+        }
+      }
+    },
+    "/audit/events": {
+      "get": {
+        "operationId": "listAuditEvents",
+        "summary": "Query audit events",
+        "tags": ["Audit"],
+        "parameters": [
+          {"name": "aggregate_type", "in": "query", "schema": {"type": "string"}},
+          {"name": "aggregate_id", "in": "query", "schema": {"type": "string", "format": "uuid"}},
+          {"name": "since", "in": "query", "schema": {"type": "string", "format": "date-time"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {"type": "array", "items": {"$ref": "#/components/schemas/AuditEvent"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audit/export": {
+      "get": {
+        "operationId": "exportAuditEvents",
+        "summary": "Export audit events",
+        "tags": ["Audit"],
+        "parameters": [
+          {"name": "format", "in": "query", "schema": {"type": "string", "enum": ["json", "csv"], "default": "csv"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit log download",
+            "content": {
+              "text/csv": {"schema": {"type": "string"}},
+              "application/json": {"schema": {"type": "object"}}
+            }
+          }
+        }
+      }
+    },
+    "/approvals/": {
+      "get": {
+        "operationId": "listApprovals",
+        "summary": "List pending approval requests",
+        "tags": ["Approvals"],
+        "responses": {
+          "200": {
+            "description": "Pending approvals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approvals": {"type": "array", "items": {"$ref": "#/components/schemas/Approval"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approvals/{id}/approve": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "post": {
+        "operationId": "approveRequest",
+        "summary": "Approve a pending request",
+        "description": "Approvers cannot approve their own requests.",
+        "tags": ["Approvals"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"type": "object", "properties": {"note": {"type": "string"}}}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Approved"},
+          "403": {"description": "Insufficient permission"},
+          "409": {"description": "Already decided or self-approval not permitted"}
+        }
+      }
+    },
+    "/approvals/{id}/reject": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "post": {
+        "operationId": "rejectRequest",
+        "summary": "Reject a pending request",
+        "tags": ["Approvals"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"type": "object", "properties": {"note": {"type": "string"}}}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Rejected"},
+          "403": {"description": "Insufficient permission"},
+          "409": {"description": "Already decided"}
+        }
+      }
+    },
+    "/actions/": {
+      "get": {
+        "operationId": "listActions",
+        "summary": "List available integration actions",
+        "tags": ["Actions"],
+        "responses": {
+          "200": {"description": "Actions list"}
+        }
+      }
+    },
+    "/actions/execute": {
+      "post": {
+        "operationId": "executeAction",
+        "summary": "Execute an integration action",
+        "tags": ["Actions"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action_key", "target_email"],
+                "properties": {
+                  "action_key": {"type": "string"},
+                  "instance_id": {"type": "string", "format": "uuid"},
+                  "target_email": {"type": "string", "format": "email"},
+                  "params": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Action executed"},
+          "202": {"description": "Queued for approval"},
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Blocked by PBAC policy"}
+        }
+      }
+    },
+    "/identities/search": {
+      "get": {
+        "operationId": "searchIdentities",
+        "summary": "Search identity directory",
+        "tags": ["Identities"],
+        "parameters": [
+          {"name": "q", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 20}}
+        ],
+        "responses": {
+          "200": {"description": "Matching identities"}
+        }
+      }
+    },
+    "/identities/cache/refresh": {
+      "post": {
+        "operationId": "refreshIdentityCache",
+        "summary": "Trigger identity cache refresh",
+        "tags": ["Identities"],
+        "responses": {
+          "200": {"description": "Refresh triggered"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/breakglass/invoke": {
+      "post": {
+        "operationId": "invokeBreakGlass",
+        "summary": "Invoke break-glass access",
+        "description": "Creates an immutable break-glass incident record and immediately executes the action, bypassing approval workflows.",
+        "tags": ["Break-Glass"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action_key", "target_email", "reason"],
+                "properties": {
+                  "action_key": {"type": "string"},
+                  "instance_id": {"type": "string", "format": "uuid"},
+                  "target_email": {"type": "string", "format": "email"},
+                  "reason": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Incident created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {"incident_id": {"type": "string", "format": "uuid"}}
+                }
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/breakglass/incidents": {
+      "get": {
+        "operationId": "listIncidents",
+        "summary": "List break-glass incidents",
+        "tags": ["Break-Glass"],
+        "responses": {
+          "200": {"description": "Incidents list"}
+        }
+      }
+    },
+    "/breakglass/incidents/{id}/review": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "post": {
+        "operationId": "reviewIncident",
+        "summary": "Submit a review note for an incident",
+        "tags": ["Break-Glass"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"type": "object", "properties": {"note": {"type": "string"}}}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Review recorded"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/tokens": {
+      "get": {
+        "operationId": "listTokens",
+        "summary": "List API tokens for the current user",
+        "tags": ["Tokens"],
+        "responses": {
+          "200": {
+            "description": "Token list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {"type": "array", "items": {"$ref": "#/components/schemas/Token"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToken",
+        "summary": "Create an API token",
+        "tags": ["Tokens"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "scopes": {"type": "array", "items": {"type": "string"}},
+                  "expires_in_days": {"type": "integer"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token created — raw token only returned once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {"$ref": "#/components/schemas/Token"},
+                    "raw": {"type": "string", "description": "Plain-text token value, shown once"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokens/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "delete": {
+        "operationId": "revokeToken",
+        "summary": "Revoke an API token",
+        "tags": ["Tokens"],
+        "responses": {
+          "200": {"description": "Token revoked"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/plugins": {
+      "get": {
+        "operationId": "listPlugins",
+        "summary": "List installed integration plugins",
+        "tags": ["Admin — Integrations"],
+        "responses": {
+          "200": {"description": "Plugin list"}
+        }
+      }
+    },
+    "/admin/instances": {
+      "get": {
+        "operationId": "listInstances",
+        "summary": "List integration instances",
+        "tags": ["Admin — Integrations"],
+        "responses": {
+          "200": {
+            "description": "Instance list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "instances": {"type": "array", "items": {"$ref": "#/components/schemas/Instance"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createInstance",
+        "summary": "Create an integration instance",
+        "tags": ["Admin — Integrations"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "plugin_id"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "plugin_id": {"type": "string"},
+                  "credentials": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "Instance created"},
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/instances/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "put": {
+        "operationId": "updateInstance",
+        "summary": "Update an integration instance",
+        "tags": ["Admin — Integrations"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {"type": "string"},
+                  "is_active": {"type": "boolean"},
+                  "credentials": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Updated"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteInstance",
+        "summary": "Delete an integration instance",
+        "tags": ["Admin — Integrations"],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List all users",
+        "tags": ["Admin — Users"],
+        "responses": {
+          "200": {
+            "description": "User list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{id}/password": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "put": {
+        "operationId": "setUserPassword",
+        "summary": "Set a user's local password",
+        "description": "Password must be 8–72 characters.",
+        "tags": ["Admin — Users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": {"password": {"type": "string", "minLength": 8, "maxLength": 72}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Password updated"},
+          "400": {"description": "Password too short or too long"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "User not found"}
+        }
+      }
+    },
+    "/admin/invitations": {
+      "get": {
+        "operationId": "listInvitations",
+        "summary": "List magic-link invitations",
+        "tags": ["Admin — Users"],
+        "responses": {
+          "200": {"description": "Invitation list"}
+        }
+      },
+      "post": {
+        "operationId": "createInvitation",
+        "summary": "Create a magic-link invitation",
+        "tags": ["Admin — Users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": {"type": "string", "format": "email"},
+                  "role_name": {"type": "string"},
+                  "label": {"type": "string"},
+                  "expires_in_hours": {"type": "integer", "default": 72}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Magic link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "link": {"type": "string", "description": "Full magic-link URL"},
+                    "token": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/invitations/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "delete": {
+        "operationId": "deleteInvitation",
+        "summary": "Revoke an invitation",
+        "tags": ["Admin — Users"],
+        "responses": {
+          "200": {"description": "Invitation revoked"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/permissions": {
+      "get": {
+        "operationId": "listPermissions",
+        "summary": "List all available permissions",
+        "tags": ["Admin — Roles"],
+        "responses": {
+          "200": {"description": "Permission catalog"}
+        }
+      }
+    },
+    "/admin/roles": {
+      "get": {
+        "operationId": "listRoles",
+        "summary": "List roles",
+        "tags": ["Admin — Roles"],
+        "responses": {
+          "200": {
+            "description": "Role list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roles": {"type": "array", "items": {"$ref": "#/components/schemas/Role"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRole",
+        "summary": "Create a custom role",
+        "tags": ["Admin — Roles"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "description": {"type": "string"},
+                  "permissions": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "Role created"},
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/roles/{name}": {
+      "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "delete": {
+        "operationId": "deleteRole",
+        "summary": "Delete a custom role",
+        "tags": ["Admin — Roles"],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "403": {"description": "Cannot delete built-in role or insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/roles/{name}/assign": {
+      "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "post": {
+        "operationId": "assignRole",
+        "summary": "Assign a role to a user",
+        "tags": ["Admin — Roles"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["user_id"],
+                "properties": {"user_id": {"type": "string", "format": "uuid"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Role assigned"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Role or user not found"}
+        }
+      }
+    },
+    "/admin/roles/{name}/permissions": {
+      "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "put": {
+        "operationId": "updateRolePermissions",
+        "summary": "Replace the permission set for a role",
+        "tags": ["Admin — Roles"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["permissions"],
+                "properties": {
+                  "permissions": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Permissions updated"},
+          "403": {"description": "Insufficient permission or built-in role"}
+        }
+      }
+    },
+    "/admin/roles/{name}/users/{userId}": {
+      "parameters": [
+        {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+        {"name": "userId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+      ],
+      "delete": {
+        "operationId": "revokeRole",
+        "summary": "Revoke a role from a user",
+        "tags": ["Admin — Roles"],
+        "responses": {
+          "200": {"description": "Role revoked"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/pbac": {
+      "get": {
+        "operationId": "listPBACPolicies",
+        "summary": "List PBAC policies",
+        "tags": ["Admin — PBAC"],
+        "responses": {
+          "200": {
+            "description": "PBAC policy list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "policies": {"type": "array", "items": {"$ref": "#/components/schemas/PBACPolicy"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/pbac/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "put": {
+        "operationId": "updatePBACPolicy",
+        "summary": "Update a PBAC policy",
+        "tags": ["Admin — PBAC"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_enabled": {"type": "boolean"},
+                  "config": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Policy updated"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/admin/hold-templates": {
+      "get": {
+        "operationId": "listHoldTemplates",
+        "summary": "List hold templates",
+        "tags": ["Admin — Hold Templates"],
+        "responses": {
+          "200": {
+            "description": "Template list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {"type": "array", "items": {"$ref": "#/components/schemas/HoldTemplate"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createHoldTemplate",
+        "summary": "Create a hold template",
+        "tags": ["Admin — Hold Templates"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "description": {"type": "string"},
+                  "provider_glob": {"type": "string", "default": "*"},
+                  "expiration_days": {"type": "integer"},
+                  "is_default": {"type": "boolean"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "Template created"},
+          "400": {"description": "Invalid request"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/hold-templates/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "put": {
+        "operationId": "updateHoldTemplate",
+        "summary": "Update a hold template",
+        "tags": ["Admin — Hold Templates"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {"type": "string"},
+                  "description": {"type": "string"},
+                  "provider_glob": {"type": "string"},
+                  "expiration_days": {"type": "integer"},
+                  "is_default": {"type": "boolean"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Updated"},
+          "400": {"description": "Not found or invalid"},
+          "403": {"description": "Insufficient permission"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteHoldTemplate",
+        "summary": "Delete a hold template",
+        "tags": ["Admin — Hold Templates"],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "400": {"description": "Not found"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/sso-config": {
+      "get": {
+        "operationId": "getSSOConfig",
+        "summary": "Get SSO configuration",
+        "tags": ["Admin — SSO"],
+        "responses": {
+          "200": {
+            "description": "SSO configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sso_enabled": {"type": "boolean"},
+                    "enforce_sso": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateSSOConfig",
+        "summary": "Update SSO configuration",
+        "tags": ["Admin — SSO"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sso_enabled": {"type": "boolean"},
+                  "enforce_sso": {"type": "boolean"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Updated"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/scim-groups": {
+      "get": {
+        "operationId": "listSCIMGroups",
+        "summary": "List SCIM groups with their role bindings",
+        "tags": ["Admin — SCIM"],
+        "responses": {
+          "200": {"description": "SCIM group list"}
+        }
+      }
+    },
+    "/admin/scim-groups/{id}/role": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "put": {
+        "operationId": "updateSCIMGroupRole",
+        "summary": "Bind or clear a role for a SCIM group",
+        "tags": ["Admin — SCIM"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role_id": {"type": "string", "format": "uuid", "description": "Omit to clear the binding"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Role binding updated"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Group not found"}
+        }
+      }
+    },
+    "/admin/vip": {
+      "get": {
+        "operationId": "listVIP",
+        "summary": "List VIP identities",
+        "tags": ["Admin — VIP"],
+        "responses": {
+          "200": {"description": "VIP list"}
+        }
+      },
+      "post": {
+        "operationId": "addVIP",
+        "summary": "Add a VIP identity",
+        "tags": ["Admin — VIP"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": {"type": "string", "format": "email"},
+                  "reason": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "VIP added"},
+          "400": {"description": "Duplicate or invalid"},
+          "403": {"description": "Insufficient permission"}
+        }
+      }
+    },
+    "/admin/vip/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "delete": {
+        "operationId": "removeVIP",
+        "summary": "Remove a VIP identity",
+        "tags": ["Admin — VIP"],
+        "responses": {
+          "200": {"description": "Removed"},
+          "403": {"description": "Insufficient permission"},
+          "404": {"description": "Not found"}
+        }
+      }
+    }
+  }
+}

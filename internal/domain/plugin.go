@@ -24,12 +24,16 @@ type Credentials map[string]string
 // ActionDefinition describes one operator-invokable action exposed by a plugin
 // against a configured instance. Destructive actions require approval / PBAC.
 type ActionDefinition struct {
-	Key             string            `json:"key"`
-	Label           string            `json:"label"`
-	Description     string            `json:"description"`
-	Destructive     bool              `json:"destructive"`
-	RequiresApproval bool             `json:"requires_approval"`
-	Params          []ParamDefinition `json:"params"`
+	Key              string            `json:"key"`
+	Label            string            `json:"label"`
+	Description      string            `json:"description"`
+	Destructive      bool              `json:"destructive"`
+	RequiresApproval bool              `json:"requires_approval"`
+	Params           []ParamDefinition `json:"params"`
+	// ApplicableStates lists the upstream account states in which this action
+	// is valid. When empty the action is always shown. The values are
+	// plugin-defined (e.g. Okta's "ACTIVE", "SUSPENDED", "DEPROVISIONED").
+	ApplicableStates []string `json:"applicable_states,omitempty"`
 }
 
 // Plugin is the root interface implemented by every integration. ID is

@@ -28,6 +28,9 @@ func NewRegistry() *Registry {
 	return &Registry{plugins: make(map[string]domain.Plugin)}
 }
 
+// GlobalRegistry returns the process-wide registry populated by plugin init() funcs.
+func GlobalRegistry() *Registry { return global }
+
 // Register adds a plugin to the global registry. Registering the same ID
 // twice panics: plugin IDs must be unique, and a duplicate registration
 // almost always indicates a programming error in a plugin's init().

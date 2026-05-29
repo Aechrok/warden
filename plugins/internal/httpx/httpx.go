@@ -42,6 +42,10 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("httpx: %s %s: %d %s: %s", e.Method, e.URL, e.StatusCode, e.Status, truncate(e.Body, 512))
 }
 
+// UpstreamHTTPStatus returns the HTTP status code from the upstream response.
+// Satisfies the upstreamHTTPStatuser interface used by the API handlers.
+func (e *APIError) UpstreamHTTPStatus() int { return e.StatusCode }
+
 // IsAPIError reports whether err is (or wraps) an APIError with the given
 // status code. A statusCode of 0 matches any APIError.
 func IsAPIError(err error, statusCode int) bool {

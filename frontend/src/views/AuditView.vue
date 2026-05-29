@@ -97,7 +97,7 @@
               style="border-bottom: 1px solid var(--border);"
             >
               <td class="px-4 py-3 text-xs font-mono" style="color: var(--text-muted);">
-                {{ formatDate(event.occurred_at) }}
+                {{ formatDate(event.created_at) }}
               </td>
               <td class="px-4 py-3">
                 <span
@@ -111,10 +111,10 @@
                 {{ event.aggregate_id.slice(0, 8) }}...
               </td>
               <td class="px-4 py-3 text-sm" style="color: var(--text-primary);">
-                {{ event.event_type }}
+                {{ event.type }}
               </td>
               <td class="px-4 py-3 text-xs" style="color: var(--text-muted);">
-                {{ event.actor_email }}
+                {{ event.actor_display ?? '—' }}
               </td>
             </tr>
           </tbody>
@@ -144,11 +144,11 @@ const filters = reactive({
 const aggregateTypes = ['hold', 'custodian', 'action', 'approval', 'breakglass', 'token', 'user']
 
 const columns = [
-  { key: 'occurred_at', label: 'Timestamp' },
+  { key: 'created_at', label: 'Timestamp' },
   { key: 'aggregate_type', label: 'Type' },
   { key: 'aggregate_id', label: 'ID' },
-  { key: 'event_type', label: 'Event' },
-  { key: 'actor_email', label: 'Actor' },
+  { key: 'type', label: 'Event' },
+  { key: 'actor_display', label: 'Actor' },
 ]
 
 async function loadEvents() {

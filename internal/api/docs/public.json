@@ -1,0 +1,573 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Warden Public API",
+    "description": "Warden is an API-first legal hold and data-governance platform. Every action available in the UI is also available here via bearer token. Create a token in **Settings → API Tokens**, select the required scopes, and pass it as `Authorization: Bearer <token>`.\n\n## Scopes\n\n| Scope | Grants |\n|---|---|\n| `holds:read` | List, get, and check hold status |\n| `holds:write` | Create, modify, release holds and manage custodians |\n| `audit:read` | Read audit event log |\n| `identities:read` | Search identity directory |\n| `integrations:execute` | Execute integration actions |",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Warden API Support"
+    }
+  },
+  "servers": [{"url": "/api/v1/public", "description": "Public API"}],
+  "security": [{"bearerAuth": []}],
+  "tags": [
+    {"name": "Holds", "description": "Create and manage legal holds. Holds place a preservation obligation on custodians across all configured integrations."},
+    {"name": "Custodians", "description": "Add and remove custodians from an active hold. Each custodian addition triggers a cascade to all matching integration instances."},
+    {"name": "Audit", "description": "Immutable append-only audit log of all actions taken in Warden."},
+    {"name": "Actions", "description": "Execute integration actions (suspend, restore, etc.) directly against a configured instance."},
+    {"name": "Identities", "description": "Search the unified identity directory across configured integrations."},
+    {"name": "Templates", "description": "Read hold templates that define provider scope, blocked actions, and default expiry."}
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API token created in Settings → API Tokens"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {"type": "string", "example": "email required"}
+        }
+      },
+      "Hold": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string", "example": "SEC-2024-001 Investigation"},
+          "description": {"type": "string"},
+          "status": {"type": "string", "enum": ["active", "released", "expired"]},
+          "placed_by": {"type": "string", "format": "uuid"},
+          "template_id": {"type": "string", "format": "uuid", "nullable": true},
+          "expires_at": {"type": "string", "format": "date-time", "nullable": true},
+          "released_at": {"type": "string", "format": "date-time", "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Custodian": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "hold_id": {"type": "string", "format": "uuid"},
+          "email": {"type": "string", "format": "email"},
+          "added_by": {"type": "string", "format": "uuid", "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "HoldTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "provider_glob": {"type": "string", "example": "*", "description": "Glob pattern matching integration instance IDs. * matches all."},
+          "blocked_actions": {"type": "array", "items": {"type": "string"}, "description": "Action keys that are blocked while the hold is active."},
+          "notes_template": {"type": "string"},
+          "expiration_days": {"type": "integer", "nullable": true},
+          "is_default": {"type": "boolean"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "aggregate_type": {"type": "string", "example": "hold"},
+          "aggregate_id": {"type": "string", "format": "uuid"},
+          "version": {"type": "integer"},
+          "type": {"type": "string", "example": "hold.created"},
+          "actor_id": {"type": "string", "format": "uuid", "nullable": true},
+          "actor_type": {"type": "string", "example": "user"},
+          "actor_display": {"type": "string", "example": "Jane Smith", "description": "Resolved display name of the actor"},
+          "payload": {"type": "object"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "CreateHoldRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "example": "SEC-2024-001 Investigation"},
+          "description": {"type": "string"},
+          "template_id": {"type": "string", "format": "uuid", "description": "Optional template — inherits provider_glob, blocked_actions, and expiration_days"},
+          "expires_at": {"type": "string", "format": "date-time", "description": "RFC3339 expiration timestamp. Overrides the template's expiration_days."},
+          "custodian_emails": {
+            "type": "array",
+            "items": {"type": "string", "format": "email"},
+            "description": "Seed custodians. Added atomically with the hold."
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Token missing or invalid",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "Forbidden": {
+        "description": "Token lacks the required scope",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "BadRequest": {
+        "description": "Invalid request body or parameters",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      }
+    }
+  },
+  "paths": {
+    "/holds": {
+      "get": {
+        "operationId": "listHolds",
+        "summary": "List legal holds",
+        "description": "Returns all holds. Filter by `status` to narrow results. Use `holds/check` to test a single email address instead of iterating this list.",
+        "tags": ["Holds"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["active", "released", "expired"]},
+            "description": "Filter by hold status. Omit to return all."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hold list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "holds": {"type": "array", "items": {"$ref": "#/components/schemas/Hold"}}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      },
+      "post": {
+        "operationId": "createHold",
+        "summary": "Create a legal hold",
+        "description": "Creates a hold and optionally seeds custodians in a single atomic transaction. If any custodian email fails to be added, the hold is still created and the failures are reported in `failed_custodians`.",
+        "tags": ["Holds"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateHoldRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Hold created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hold": {"$ref": "#/components/schemas/Hold"},
+                    "failed_custodians": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "Emails that could not be added as custodians"
+                    },
+                    "warning": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/holds/check": {
+      "get": {
+        "operationId": "checkHoldStatus",
+        "summary": "Boolean hold check for an email",
+        "description": "Returns a single `on_hold` boolean. Designed for lightweight integration checks (HRIS, offboarding workflows, etc.) that only need a yes/no answer.",
+        "tags": ["Holds"],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "format": "email"},
+            "description": "Email address to check. Case-insensitive.",
+            "example": "jane.smith@acme.com"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hold status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "on_hold": {"type": "boolean"}
+                  }
+                },
+                "examples": {
+                  "true":  {"value": {"on_hold": true}},
+                  "false": {"value": {"on_hold": false}}
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/holds/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string", "format": "uuid"},
+          "description": "Hold UUID"
+        }
+      ],
+      "get": {
+        "operationId": "getHold",
+        "summary": "Get a hold with its custodians",
+        "tags": ["Holds"],
+        "responses": {
+          "200": {
+            "description": "Hold detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hold": {"$ref": "#/components/schemas/Hold"},
+                    "custodians": {"type": "array", "items": {"$ref": "#/components/schemas/Custodian"}}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/holds/{id}/custodians": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+      ],
+      "post": {
+        "operationId": "addCustodian",
+        "summary": "Add a custodian to a hold",
+        "description": "Adds the email as a custodian and triggers a preservation cascade to all matching integration instances. The hold must be active.",
+        "tags": ["Custodians"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": {"type": "string", "format": "email"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Custodian added",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "example": "added"}}}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/holds/{id}/custodians/{custodianId}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}},
+        {"name": "custodianId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+      ],
+      "delete": {
+        "operationId": "removeCustodian",
+        "summary": "Remove a custodian from a hold",
+        "description": "Removes the custodian and triggers a release cascade to all integration instances for that custodian.",
+        "tags": ["Custodians"],
+        "responses": {
+          "200": {
+            "description": "Custodian removed",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "example": "removed"}}}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/holds/{id}/release": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+      ],
+      "post": {
+        "operationId": "releaseHold",
+        "summary": "Release a legal hold",
+        "description": "Releases the hold and all its custodians. A mandatory reason is recorded in the audit log. This action is irreversible.",
+        "tags": ["Holds"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": {"type": "string", "example": "Matter closed — settlement reached 2024-03-15"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hold released",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "example": "released"}}}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/hold-templates": {
+      "get": {
+        "operationId": "listHoldTemplates",
+        "summary": "List hold templates",
+        "description": "Templates define the provider scope (`provider_glob`), which integration actions are blocked, the notes template, and a default expiration period. Pass a template's `id` in `createHold` to inherit its settings.",
+        "tags": ["Templates"],
+        "responses": {
+          "200": {
+            "description": "Template list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {"type": "array", "items": {"$ref": "#/components/schemas/HoldTemplate"}}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/audit/events": {
+      "get": {
+        "operationId": "listAuditEvents",
+        "summary": "Query the audit log",
+        "description": "Returns immutable audit events. Events are append-only and cannot be modified or deleted. Filter by `aggregate_type` and `aggregate_id` to scope results to a specific resource.",
+        "tags": ["Audit"],
+        "parameters": [
+          {
+            "name": "aggregate_type",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["hold", "custodian", "action", "approval", "breakglass", "user", "hold_template"]},
+            "description": "Filter by resource type"
+          },
+          {
+            "name": "aggregate_id",
+            "in": "query",
+            "schema": {"type": "string", "format": "uuid"},
+            "description": "Filter by specific resource ID"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {"type": "string", "format": "date-time"},
+            "description": "Return events after this timestamp (RFC3339)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+            "description": "Maximum number of events to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit events, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {"type": "array", "items": {"$ref": "#/components/schemas/AuditEvent"}}
+                  }
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/actions/execute": {
+      "post": {
+        "operationId": "executeAction",
+        "summary": "Execute an integration action",
+        "description": "Executes an action directly against a configured integration instance. Actions that require approval will be queued and return 202 instead of 200. Check the audit log for the outcome.",
+        "tags": ["Actions"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action_key", "target_email"],
+                "properties": {
+                  "action_key": {
+                    "type": "string",
+                    "example": "google_workspace.suspend_user",
+                    "description": "Fully-qualified action key. Use the internal API's GET /actions/ to enumerate available keys."
+                  },
+                  "instance_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Target integration instance. Required when multiple instances of the same plugin exist."
+                  },
+                  "target_email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email address of the identity the action should be applied to"
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "Action-specific parameters. Refer to plugin documentation for the accepted keys."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Action executed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {"type": "object", "description": "Plugin-specific result payload"}
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Action queued — pending approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approval_id": {"type": "string", "format": "uuid"},
+                    "message": {"type": "string", "example": "Action queued for approval"}
+                  }
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "502": {
+            "description": "Integration returned an error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+          }
+        }
+      }
+    },
+    "/identities/search": {
+      "get": {
+        "operationId": "searchIdentities",
+        "summary": "Look up an identity in a specific integration",
+        "description": "Resolves an email address against a specific integration instance and returns the identity record as known to that system.",
+        "tags": ["Identities"],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "format": "email"},
+            "description": "Email address to resolve"
+          },
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "format": "uuid"},
+            "description": "Integration instance to query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resolved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "identity": {
+                      "type": "object",
+                      "description": "Plugin-specific identity record",
+                      "properties": {
+                        "email": {"type": "string"},
+                        "name": {"type": "string"},
+                        "is_active": {"type": "boolean"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "500": {
+            "description": "Identity lookup failed",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+          }
+        }
+      }
+    }
+  }
+}

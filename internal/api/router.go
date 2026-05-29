@@ -13,6 +13,8 @@ import (
 	apiinternal "github.com/aechrok/warden/internal/api/internal"
 	"github.com/aechrok/warden/internal/api/middleware"
 	apipublic "github.com/aechrok/warden/internal/api/public"
+	"github.com/aechrok/warden/internal/api/docs"
+	"github.com/aechrok/warden/internal/debug"
 	"github.com/aechrok/warden/internal/rbac"
 	"github.com/aechrok/warden/internal/scim"
 )
@@ -45,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 		EventStore: s.eventStore,
 		Logger:     s.logger,
 		Secure:     s.secureCookies(),
+		EncKey:     s.cfg.EncryptionKey,
 	}
 
 	pubDeps := &apipublic.Deps{
@@ -59,6 +62,9 @@ func (s *Server) Handler() http.Handler {
 	// ----------------------------------------------------------------
 	mux.Handle("/auth/login", apply(http.HandlerFunc(authHandler.Login), rateLimitMiddleware))
 	mux.Handle("/auth/callback", apply(http.HandlerFunc(authHandler.Callback), rateLimitMiddleware))
+	mux.Handle("/auth/local", apply(http.HandlerFunc(authHandler.LocalLogin), rateLimitMiddleware))
+	mux.Handle("/auth/magic", apply(http.HandlerFunc(authHandler.RedeemMagicLink), rateLimitMiddleware))
+	mux.Handle("/auth/config", apply(http.HandlerFunc(authHandler.GetAuthConfig), rateLimitMiddleware))
 
 	// ----------------------------------------------------------------
 	// /scim/v2/ — SCIM 2.0 (bearer token + scim:admin)
@@ -74,6 +80,13 @@ func (s *Server) Handler() http.Handler {
 	// /api/v1/public/ — bearer token auth
 	// ----------------------------------------------------------------
 	mountPublic(mux, pubDeps, tokenAuthMW, rateLimitMiddleware)
+
+	// ----------------------------------------------------------------
+	// API docs (unauthenticated, rate-limited)
+	// ----------------------------------------------------------------
+	mux.Handle("/api/v1/internal/docs/", apply(http.StripPrefix("/api/v1/internal/docs", docs.InternalHandler()), rateLimitMiddleware))
+	mux.Handle("/api/v1/public/docs/", apply(http.StripPrefix("/api/v1/public/docs", docs.PublicHandler()), rateLimitMiddleware))
+	mux.Handle("/scim/v2/docs/", apply(http.StripPrefix("/scim/v2/docs", docs.SCIMHandler()), rateLimitMiddleware))
 
 	// ----------------------------------------------------------------
 	// / — Vue SPA (only when frontend/dist exists; no-op otherwise)
@@ -328,12 +341,24 @@ func mountInternal(mux *http.ServeMux, deps *apiinternal.Deps, s *Server, sessio
 		http.HandlerFunc(deps.AssistantStream),
 		append(authMWs, s.requirePerm(rbac.PermAssistantUse))...,
 	))
+
+	// Debug stats (only when tracer is active — requires WARDEN_DEBUG=true at startup)
+	if s.debugTracer != nil {
+		mux.Handle("/api/v1/internal/debug/stats", apply(
+			http.HandlerFunc(debug.StatsHandler(s.debugTracer)),
+			authMWs...,
+		))
+	}
 }
 
 // mountPublic registers all /api/v1/public/* handlers.
 func mountPublic(mux *http.ServeMux, deps *apipublic.Deps, tokenAuth, rateLimitMW func(http.Handler) http.Handler) {
 	base := []func(http.Handler) http.Handler{tokenAuth, rateLimitMW}
+
 	mux.Handle("/api/v1/public/actions/execute", apply(http.HandlerFunc(deps.ExecuteAction), base...))
+
+	// Holds — exact paths must be registered before the wildcard /holds/ prefix.
+	mux.Handle("/api/v1/public/holds/check", apply(http.HandlerFunc(deps.IsOnHold), base...))
 	mux.Handle("/api/v1/public/holds", apply(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
@@ -345,12 +370,40 @@ func mountPublic(mux *http.ServeMux, deps *apipublic.Deps, tokenAuth, rateLimitM
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
 		}), base...))
+	mux.Handle("/api/v1/public/holds/", apply(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			parts := pathSegments(r.URL.Path, "/api/v1/public/holds/")
+			switch {
+			case len(parts) == 1:
+				if r.Method == http.MethodGet {
+					deps.GetHold(w, r, parts[0])
+				} else {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			case len(parts) == 2 && parts[1] == "custodians" && r.Method == http.MethodPost:
+				deps.AddCustodian(w, r, parts[0])
+			case len(parts) == 3 && parts[1] == "custodians" && r.Method == http.MethodDelete:
+				deps.RemoveCustodian(w, r, parts[0], parts[2])
+			case len(parts) == 2 && parts[1] == "release" && r.Method == http.MethodPost:
+				deps.ReleaseHold(w, r, parts[0])
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}), base...))
+
+	mux.Handle("/api/v1/public/hold-templates", apply(http.HandlerFunc(deps.ListHoldTemplates), base...))
 	mux.Handle("/api/v1/public/audit/events", apply(http.HandlerFunc(deps.ListAuditEvents), base...))
 	mux.Handle("/api/v1/public/identities/search", apply(http.HandlerFunc(deps.SearchIdentities), base...))
 }
 
 // mountAdmin registers admin sub-routes.
 func mountAdmin(mux *http.ServeMux, deps *apiinternal.Deps, s *Server, authMWs []func(http.Handler) http.Handler) {
+	// Plugins
+	mux.Handle("/api/v1/internal/admin/plugins", apply(
+		http.HandlerFunc(deps.ListPlugins),
+		append(authMWs, s.requirePerm(rbac.PermInstancesRead))...,
+	))
+
 	// Instances
 	instancesH := instancesDispatch(deps, s)
 	mux.Handle("/api/v1/internal/admin/instances/", apply(instancesH, append(authMWs, s.requirePerm(rbac.PermInstancesRead))...))
@@ -366,10 +419,64 @@ func mountAdmin(mux *http.ServeMux, deps *apiinternal.Deps, s *Server, authMWs [
 			}
 		}), append(authMWs, s.requirePerm(rbac.PermInstancesRead))...))
 
+	// Users
+	mux.Handle("/api/v1/internal/admin/users", apply(
+		http.HandlerFunc(deps.ListUsers),
+		append(authMWs, s.requirePerm(rbac.PermUsersRead))...,
+	))
+	mux.Handle("/api/v1/internal/admin/users/", apply(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			parts := pathSegments(r.URL.Path, "/api/v1/internal/admin/users/")
+			if len(parts) == 2 && parts[1] == "password" && r.Method == http.MethodPut {
+				s.requirePerm(rbac.PermUsersWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					deps.SetUserPassword(w, r, parts[0])
+				})).ServeHTTP(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}),
+		append(authMWs, s.requirePerm(rbac.PermUsersRead))...,
+	))
+
+	// Invitations (magic links)
+	invitationsH := invitationsDispatch(deps, s)
+	mux.Handle("/api/v1/internal/admin/invitations/", apply(invitationsH, append(authMWs, s.requirePerm(rbac.PermUsersRead))...))
+	mux.Handle("/api/v1/internal/admin/invitations", apply(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				deps.ListInvitations(w, r)
+			case http.MethodPost:
+				s.requirePerm(rbac.PermUsersWrite)(http.HandlerFunc(deps.CreateInvitation)).ServeHTTP(w, r)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		}),
+		append(authMWs, s.requirePerm(rbac.PermUsersRead))...,
+	))
+
+	// Permissions catalog
+	mux.Handle("/api/v1/internal/admin/permissions", apply(
+		http.HandlerFunc(deps.ListPermissions),
+		append(authMWs, s.requirePerm(rbac.PermRolesRead))...,
+	))
+
 	// Roles
 	rolesH := rolesDispatch(deps, s)
 	mux.Handle("/api/v1/internal/admin/roles/", apply(rolesH, append(authMWs, s.requirePerm(rbac.PermRolesRead))...))
-	mux.Handle("/api/v1/internal/admin/roles", apply(http.HandlerFunc(deps.ListRoles), append(authMWs, s.requirePerm(rbac.PermRolesRead))...))
+	mux.Handle("/api/v1/internal/admin/roles", apply(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				deps.ListRoles(w, r)
+			case http.MethodPost:
+				s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(deps.CreateRole)).ServeHTTP(w, r)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		}),
+		append(authMWs, s.requirePerm(rbac.PermRolesRead))...,
+	))
 
 	// PBAC
 	pbacH := pbacDispatch(deps, s)
@@ -390,6 +497,29 @@ func mountAdmin(mux *http.ServeMux, deps *apiinternal.Deps, s *Server, authMWs [
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
 		}), append(authMWs, s.requirePerm(rbac.PermHoldTemplatesRead))...))
+
+	// SSO Config
+	mux.Handle("/api/v1/internal/admin/sso-config", apply(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				deps.GetSSOConfig(w, r)
+			case http.MethodPut:
+				s.requirePerm(rbac.PermInstancesWrite)(http.HandlerFunc(deps.UpdateSSOConfig)).ServeHTTP(w, r)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		}),
+		append(authMWs, s.requirePerm(rbac.PermInstancesRead))...,
+	))
+
+	// SCIM Groups
+	scimGroupsH := scimGroupsDispatch(deps, s)
+	mux.Handle("/api/v1/internal/admin/scim-groups/", apply(scimGroupsH, append(authMWs, s.requirePerm(rbac.PermRolesRead))...))
+	mux.Handle("/api/v1/internal/admin/scim-groups", apply(
+		http.HandlerFunc(deps.ListSCIMGroups),
+		append(authMWs, s.requirePerm(rbac.PermRolesRead))...,
+	))
 
 	// VIP
 	vipH := vipDispatch(deps, s)
@@ -536,13 +666,23 @@ func instancesDispatch(deps *apiinternal.Deps, s *Server) http.Handler {
 
 func rolesDispatch(deps *apiinternal.Deps, s *Server) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /api/v1/internal/admin/roles/{name}
 		// /api/v1/internal/admin/roles/{name}/assign
+		// /api/v1/internal/admin/roles/{name}/permissions
 		// /api/v1/internal/admin/roles/{name}/users/{userId}
 		parts := pathSegments(r.URL.Path, "/api/v1/internal/admin/roles/")
 		switch {
+		case len(parts) == 1 && r.Method == http.MethodDelete:
+			s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deps.DeleteRole(w, r, parts[0])
+			})).ServeHTTP(w, r)
 		case len(parts) == 2 && parts[1] == "assign" && r.Method == http.MethodPost:
 			s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				deps.AssignRole(w, r, parts[0])
+			})).ServeHTTP(w, r)
+		case len(parts) == 2 && parts[1] == "permissions" && r.Method == http.MethodPut:
+			s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deps.UpdateRolePermissions(w, r, parts[0])
 			})).ServeHTTP(w, r)
 		case len(parts) == 3 && parts[1] == "users" && r.Method == http.MethodDelete:
 			s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,6 +723,33 @@ func holdTemplatesDispatch(deps *apiinternal.Deps, s *Server) http.Handler {
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+}
+
+func scimGroupsDispatch(deps *apiinternal.Deps, s *Server) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /api/v1/internal/admin/scim-groups/{id}/role
+		parts := pathSegments(r.URL.Path, "/api/v1/internal/admin/scim-groups/")
+		if len(parts) == 2 && parts[1] == "role" && r.Method == http.MethodPut {
+			s.requirePerm(rbac.PermRolesWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deps.UpdateSCIMGroupRole(w, r, parts[0])
+			})).ServeHTTP(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+}
+
+func invitationsDispatch(deps *apiinternal.Deps, s *Server) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := pathSegments(r.URL.Path, "/api/v1/internal/admin/invitations/")
+		if len(parts) == 1 && r.Method == http.MethodDelete {
+			s.requirePerm(rbac.PermUsersWrite)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deps.DeleteInvitation(w, r, parts[0])
+			})).ServeHTTP(w, r)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

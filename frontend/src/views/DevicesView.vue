@@ -33,7 +33,7 @@
     <div v-if="devices.length > 0" class="space-y-3">
       <div
         v-for="device in devices"
-        :key="device.id"
+        :key="device.instance_id"
         class="rounded-xl p-4"
         style="background: var(--card); border: 1px solid var(--border);"
       >
@@ -43,7 +43,7 @@
               {{ device.display_name || device.email }}
             </div>
             <div class="text-xs mt-1" style="color: var(--text-muted);">
-              Provider: {{ device.provider }} · Status: {{ device.status }}
+              Instance: {{ device.instance_name }} · Status: {{ deviceStatus(device.data) }}
             </div>
           </div>
           <div class="flex gap-2 flex-shrink-0">
@@ -119,14 +119,19 @@ const showLockConfirm = ref(false)
 const showWipeConfirm = ref(false)
 const pendingAction = ref<{ device: Identity; actionKey: string } | null>(null)
 
+function deviceStatus(data?: Record<string, unknown>): string {
+  if (!data) return 'unknown'
+  const s = data['status'] ?? data['managementStatus'] ?? data['enrollmentStatus']
+  return s ? String(s) : 'enrolled'
+}
+
 async function doSearch() {
   if (!searchEmail.value.trim()) return
   loading.value = true
   error.value = null
   try {
-    // Search all instances, then filter to JAMF results
-    const all = await searchIdentities(searchEmail.value.trim())
-    devices.value = all.filter((i) => i.provider?.toLowerCase().includes('jamf'))
+    const res = await searchIdentities(searchEmail.value.trim())
+    devices.value = res.identities.filter((i) => i.instance_name?.toLowerCase().includes('jamf'))
     searched.value = true
     // Load actions for JAMF instances
     if (devices.value.length > 0) {

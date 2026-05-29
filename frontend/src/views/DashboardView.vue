@@ -134,7 +134,7 @@ async function loadStats() {
       stats.activeHolds = holds.value.filter((h) => h.status === 'active').length
     }
     if (instances.status === 'fulfilled') {
-      stats.activeIntegrations = instances.value.filter((i) => i.enabled).length
+      stats.activeIntegrations = instances.value.filter((i) => i.is_active).length
     }
     if (incidents.status === 'fulfilled') {
       const today = new Date().toDateString()

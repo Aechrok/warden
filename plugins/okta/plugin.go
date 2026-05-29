@@ -22,9 +22,13 @@ const (
 	credBaseURL  = "base_url"
 	credAPIToken = "api_token"
 
-	actionDeactivate = "deactivate_user"
-	actionActivate   = "activate_user"
-	actionSuspend    = "set_blocked_access"
+	actionDeactivate     = "deactivate_user"
+	actionActivate       = "activate_user"
+	actionSuspend        = "suspend_user"
+	actionUnsuspend      = "unsuspend_user"
+	actionResetPassword  = "reset_password"
+	actionResetFactors   = "reset_factors"
+	actionClearSessions  = "clear_sessions"
 )
 
 // Plugin is the Okta implementation of domain.Plugin, ActionExecutor, and
@@ -58,12 +62,50 @@ func (p *Plugin) CredentialSchema() []domain.CredentialField {
 	}
 }
 
+// activeStates are states where the account is usable and can be acted on fully.
+var activeStates = []string{"ACTIVE", "RECOVERY", "LOCKED_OUT", "PASSWORD_EXPIRED"}
+
 // Actions returns the operator-invokable actions exposed by the Okta plugin.
 func (p *Plugin) Actions() []domain.ActionDefinition {
 	return []domain.ActionDefinition{
-		{Key: actionDeactivate, Label: "Deactivate user", Description: "Permanently deactivate the Okta user account.", Destructive: true, RequiresApproval: true},
-		{Key: actionActivate, Label: "Activate user", Description: "Re-activate a previously deactivated Okta user.", Destructive: false},
-		{Key: actionSuspend, Label: "Block access (suspend)", Description: "Suspend the user so they cannot authenticate.", Destructive: true, RequiresApproval: true},
+		{
+			Key: actionResetPassword, Label: "Reset password",
+			Description:      "Send the user a password reset email.",
+			ApplicableStates: activeStates,
+		},
+		{
+			Key: actionResetFactors, Label: "Clear all MFA factors",
+			Description:      "Remove all enrolled MFA factors, forcing re-enrollment on next login.",
+			Destructive:      true, RequiresApproval: true,
+			ApplicableStates: []string{"ACTIVE", "RECOVERY", "LOCKED_OUT"},
+		},
+		{
+			Key: actionClearSessions, Label: "Clear sessions",
+			Description:      "Terminate all active Okta sessions for this user.",
+			ApplicableStates: append(activeStates, "SUSPENDED"),
+		},
+		{
+			Key: actionSuspend, Label: "Suspend user",
+			Description:      "Suspend the user so they cannot authenticate.",
+			Destructive:      true, RequiresApproval: true,
+			ApplicableStates: activeStates,
+		},
+		{
+			Key: actionUnsuspend, Label: "Unsuspend user",
+			Description:      "Restore access for a previously suspended user.",
+			ApplicableStates: []string{"SUSPENDED"},
+		},
+		{
+			Key: actionDeactivate, Label: "Deactivate user",
+			Description:      "Permanently deactivate the Okta user account.",
+			Destructive:      true, RequiresApproval: true,
+			ApplicableStates: append(activeStates, "SUSPENDED", "PROVISIONED"),
+		},
+		{
+			Key: actionActivate, Label: "Reactivate user",
+			Description:      "Re-activate a previously deactivated Okta user.",
+			ApplicableStates: []string{"DEPROVISIONED", "PROVISIONED"},
+		},
 	}
 }
 
@@ -113,31 +155,55 @@ func (p *Plugin) Execute(ctx context.Context, creds domain.Credentials, instance
 	if err != nil {
 		return domain.ActionResult{}, err
 	}
-	var op string
+
+	userPath := httpx.JoinURL(base, "/api/v1/users", url.PathEscape(targetEmail))
+
 	switch actionKey {
-	case actionDeactivate:
-		op = "deactivate"
-	case actionActivate:
-		op = "activate"
-	case actionSuspend:
-		op = "suspend"
+	case actionDeactivate, actionActivate, actionSuspend, actionUnsuspend, actionResetPassword, actionResetFactors:
+		lifecycleOp := map[string]string{
+			actionDeactivate:    "deactivate",
+			actionActivate:      "activate",
+			actionSuspend:       "suspend",
+			actionUnsuspend:     "unsuspend",
+			actionResetPassword: "reset_password",
+			actionResetFactors:  "reset_factors",
+		}[actionKey]
+		endpoint := httpx.JoinURL(userPath, "lifecycle", lifecycleOp)
+		if actionKey == actionResetPassword {
+			endpoint += "?sendEmail=true"
+		}
+		req, err := httpx.NewJSONRequest(http.MethodPost, endpoint, nil)
+		if err != nil {
+			return domain.ActionResult{}, err
+		}
+		authHeader(req, creds)
+		if err := httpx.DoJSON(ctx, p.client, req, nil); err != nil {
+			return domain.ActionResult{Success: false, Message: err.Error()}, err
+		}
+		return domain.ActionResult{
+			Success: true,
+			Message: fmt.Sprintf("okta: %s applied to %s", lifecycleOp, targetEmail),
+			Data:    map[string]any{"action": lifecycleOp, "email": targetEmail},
+		}, nil
+
+	case actionClearSessions:
+		req, err := httpx.NewJSONRequest(http.MethodDelete, httpx.JoinURL(userPath, "sessions"), nil)
+		if err != nil {
+			return domain.ActionResult{}, err
+		}
+		authHeader(req, creds)
+		if err := httpx.DoJSON(ctx, p.client, req, nil); err != nil {
+			return domain.ActionResult{Success: false, Message: err.Error()}, err
+		}
+		return domain.ActionResult{
+			Success: true,
+			Message: fmt.Sprintf("okta: sessions cleared for %s", targetEmail),
+			Data:    map[string]any{"action": "clear_sessions", "email": targetEmail},
+		}, nil
+
 	default:
 		return domain.ActionResult{}, fmt.Errorf("okta: unknown action %q", actionKey)
 	}
-	endpoint := httpx.JoinURL(base, "/api/v1/users", url.PathEscape(targetEmail), "lifecycle", op)
-	req, err := httpx.NewJSONRequest(http.MethodPost, endpoint, nil)
-	if err != nil {
-		return domain.ActionResult{}, err
-	}
-	authHeader(req, creds)
-	if err := httpx.DoJSON(ctx, p.client, req, nil); err != nil {
-		return domain.ActionResult{Success: false, Message: err.Error()}, err
-	}
-	return domain.ActionResult{
-		Success: true,
-		Message: fmt.Sprintf("okta: %s on %s", op, targetEmail),
-		Data:    map[string]any{"action": op, "email": targetEmail},
-	}, nil
 }
 
 func authHeader(req *http.Request, creds domain.Credentials) {

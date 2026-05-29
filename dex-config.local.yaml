@@ -15,7 +15,9 @@ staticClients:
     secret: warden-secret
     redirectURIs:
       - http://localhost:8080/auth/callback
+      - http://localhost:5173/auth/callback
     name: Warden Local
+    skipApprovalScreen: true
 
 enablePasswordDB: true
 

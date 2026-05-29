@@ -33,9 +33,10 @@ services:
       OIDC_INTERNAL_ISSUER: http://dex:5556/dex
       OIDC_CLIENT_ID: warden
       OIDC_CLIENT_SECRET: warden-secret
-      OIDC_REDIRECT_URL: http://localhost:8080/auth/callback
+      OIDC_REDIRECT_URL: http://localhost:5173/auth/callback
       SERVER_PORT: "8080"
       ON_CALL_PROVIDER: none
+      WARDEN_DEBUG: "true"
     ports:
       - "8080:8080"
     depends_on:
@@ -45,5 +46,20 @@ services:
         condition: service_started
     restart: on-failure
 
+  frontend:
+    image: node:22-alpine
+    working_dir: /frontend
+    command: sh -c "npm install && npx vite --host 0.0.0.0"
+    volumes:
+      - ./frontend:/frontend
+      - frontend-nm:/frontend/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      API_TARGET: http://warden:8080
+    depends_on:
+      - warden
+
 volumes:
   pg-data:
+  frontend-nm:

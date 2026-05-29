@@ -4,6 +4,7 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/aechrok/warden/internal/api/middleware"
 	"github.com/aechrok/warden/internal/auth"
 	"github.com/aechrok/warden/internal/breakglass"
+	"github.com/aechrok/warden/internal/crypto"
 	"github.com/aechrok/warden/internal/domain"
 	"github.com/aechrok/warden/internal/legalhold"
 	"github.com/aechrok/warden/internal/plugin"
@@ -37,6 +39,45 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// upstreamHTTPStatuser is satisfied by httpx.APIError without requiring an
+// import of the plugins/internal/httpx package (which is internal to plugins/).
+type upstreamHTTPStatuser interface {
+	UpstreamHTTPStatus() int
+}
+
+// upstreamStatus returns the HTTP status to forward to the client for an
+// upstream plugin error. 401/403/404 from the upstream map 1:1; everything
+// else becomes 502.
+func upstreamStatus(err error) int {
+	var ae upstreamHTTPStatuser
+	if errors.As(err, &ae) {
+		switch ae.UpstreamHTTPStatus() {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			return ae.UpstreamHTTPStatus()
+		}
+		return http.StatusBadGateway
+	}
+	return http.StatusInternalServerError
+}
+
+// upstreamMessage returns a human-readable error message from an upstream
+// plugin error, falling back to a generic message for internal errors.
+func upstreamMessage(err error) string {
+	var ae upstreamHTTPStatuser
+	if errors.As(err, &ae) {
+		switch ae.UpstreamHTTPStatus() {
+		case http.StatusUnauthorized:
+			return "upstream rejected request: 401 Unauthorized — check integration credentials"
+		case http.StatusForbidden:
+			return "upstream rejected request: 403 Forbidden — token lacks required permissions"
+		case http.StatusNotFound:
+			return "identity not found in this integration"
+		}
+		return fmt.Sprintf("upstream error: %d", ae.UpstreamHTTPStatus())
+	}
+	return err.Error()
+}
+
 // Deps bundles all service dependencies for internal API handlers.
 type Deps struct {
 	Pool       *pgxpool.Pool
@@ -49,6 +90,7 @@ type Deps struct {
 	EventStore *store.EventStore
 	Logger     *zap.Logger
 	Secure     bool
+	EncKey     []byte
 }
 
 // -----------------------------------------------------------------------
@@ -104,7 +146,8 @@ func (d *Deps) Me(w http.ResponseWriter, r *http.Request) {
 // Identities
 // -----------------------------------------------------------------------
 
-// SearchIdentities resolves an email against a specific integration instance.
+// SearchIdentities resolves an email against a specific integration instance,
+// or returns all cached results across instances when instance_id is omitted.
 // GET /api/v1/internal/identities/search?email=&instance_id=
 func (d *Deps) SearchIdentities(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.URL.Query().Get("email"))
@@ -112,23 +155,70 @@ func (d *Deps) SearchIdentities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email required")
 		return
 	}
+
+	var onHold bool
+	_ = d.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1 FROM legal_hold_custodians c
+			JOIN legal_holds lh ON lh.id = c.hold_id
+			WHERE lower(c.email) = lower($1)
+			  AND c.removed_at IS NULL
+			  AND lh.status = 'active'
+		)
+	`, email).Scan(&onHold)
+
 	instanceIDStr := strings.TrimSpace(r.URL.Query().Get("instance_id"))
-	if instanceIDStr == "" {
-		writeError(w, http.StatusBadRequest, "instance_id required")
+	if instanceIDStr != "" {
+		// Live lookup for a specific instance.
+		instanceID, err := uuid.Parse(instanceIDStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid instance_id")
+			return
+		}
+		identity, err := d.Dispatcher.GetIdentity(r.Context(), instanceID, email)
+		if err != nil {
+			d.Logger.Error("search identities", zap.Error(err))
+			writeError(w, upstreamStatus(err), upstreamMessage(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"identities": []domain.Identity{identity},
+			"on_hold":    onHold,
+		})
 		return
 	}
-	instanceID, err := uuid.Parse(instanceIDStr)
+
+	// No instance specified — fan out live lookups across all active instances.
+	instRows, err := d.Pool.Query(r.Context(), `
+		SELECT id FROM integration_instances WHERE is_active = true ORDER BY name ASC
+	`)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid instance_id")
-		return
-	}
-	identity, err := d.Dispatcher.GetIdentity(r.Context(), instanceID, email)
-	if err != nil {
-		d.Logger.Error("search identities", zap.Error(err))
+		d.Logger.Error("search identities: list instances", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"identity": identity})
+	var instanceIDs []uuid.UUID
+	for instRows.Next() {
+		var iid uuid.UUID
+		if err := instRows.Scan(&iid); err == nil {
+			instanceIDs = append(instanceIDs, iid)
+		}
+	}
+	instRows.Close()
+
+	identities := []domain.Identity{}
+	for _, iid := range instanceIDs {
+		id, err := d.Dispatcher.GetIdentity(r.Context(), iid, email)
+		if err != nil {
+			d.Logger.Warn("search identities: skip instance", zap.Stringer("instance_id", iid), zap.Error(err))
+			continue
+		}
+		identities = append(identities, id)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"identities": identities,
+		"on_hold":    onHold,
+	})
 }
 
 // RefreshIdentityCache re-runs the identity lookup and updates identity_cache.
@@ -167,7 +257,8 @@ func (d *Deps) RefreshIdentityCache(w http.ResponseWriter, r *http.Request) {
 // Actions
 // -----------------------------------------------------------------------
 
-// ListActions returns available actions per active integration instance.
+// ListActions returns all available actions as a flat list, each decorated
+// with the instance_id and plugin they belong to.
 // GET /api/v1/internal/actions/
 func (d *Deps) ListActions(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.Pool.Query(r.Context(), `
@@ -180,13 +271,17 @@ func (d *Deps) ListActions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	type instanceActions struct {
-		InstanceID   string                    `json:"instance_id"`
-		InstanceName string                    `json:"instance_name"`
-		PluginID     string                    `json:"plugin_id"`
-		Actions      []domain.ActionDefinition `json:"actions"`
+	type actionItem struct {
+		Key              string   `json:"key"`
+		Label            string   `json:"label"`
+		Description      string   `json:"description"`
+		InstanceID       string   `json:"instance_id"`
+		Plugin           string   `json:"plugin"`
+		Destructive      bool     `json:"destructive"`
+		RequiresApproval bool     `json:"requires_approval"`
+		ApplicableStates []string `json:"applicable_states,omitempty"`
 	}
-	var result []instanceActions
+	var result []actionItem
 	for rows.Next() {
 		var id uuid.UUID
 		var name, pluginID string
@@ -201,14 +296,20 @@ func (d *Deps) ListActions(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		result = append(result, instanceActions{
-			InstanceID:   id.String(),
-			InstanceName: name,
-			PluginID:     pluginID,
-			Actions:      exec.Actions(),
-		})
+		for _, a := range exec.Actions() {
+			result = append(result, actionItem{
+				Key:              a.Key,
+				Label:            a.Label,
+				Description:      a.Description,
+				InstanceID:       id.String(),
+				Plugin:           pluginID,
+				Destructive:      a.Destructive,
+				RequiresApproval: a.RequiresApproval,
+				ApplicableStates: a.ApplicableStates,
+			})
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"instances": result})
+	writeJSON(w, http.StatusOK, map[string]any{"actions": result})
 }
 
 // ExecuteAction runs an action against an integration instance.
@@ -291,10 +392,11 @@ func (d *Deps) appendActionEvent(ctx context.Context, tx pgx.Tx, instanceID uuid
 // POST /api/v1/internal/holds/
 func (d *Deps) CreateHold(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		TemplateID  *string `json:"template_id,omitempty"`
-		ExpiresAt   *string `json:"expires_at,omitempty"`
+		Name            string   `json:"name"`
+		Description     string   `json:"description"`
+		TemplateID      *string  `json:"template_id,omitempty"`
+		ExpiresAt       *string  `json:"expires_at,omitempty"`
+		CustodianEmails []string `json:"custodian_emails,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -343,14 +445,33 @@ func (d *Deps) CreateHold(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create hold")
 		return
 	}
+
+	var failedCustodians []string
+	for _, email := range body.CustodianEmails {
+		email = strings.TrimSpace(strings.ToLower(email))
+		if email == "" {
+			continue
+		}
+		if err := d.HoldSvc.AddCustodian(r.Context(), tx, hold.ID, email, actor); err != nil {
+			d.Logger.Warn("create hold: add custodian", zap.String("email", email), zap.Error(err))
+			failedCustodians = append(failedCustodians, email)
+		}
+	}
+
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"hold": hold})
+
+	resp := map[string]any{"hold": hold}
+	if len(failedCustodians) > 0 {
+		resp["failed_custodians"] = failedCustodians
+		resp["warning"] = "some custodians could not be added"
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
-// ListHolds lists holds, optionally filtered by status.
+// ListHolds lists holds enriched with custodians, cascade states, and placed-by name.
 // GET /api/v1/internal/holds/?status=
 func (d *Deps) ListHolds(w http.ResponseWriter, r *http.Request) {
 	var filter legalhold.ListHoldsFilter
@@ -364,10 +485,125 @@ func (d *Deps) ListHolds(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"holds": holds})
+
+	type holdEnriched struct {
+		*domain.Hold
+		PlacedByName  string                `json:"placed_by_name,omitempty"`
+		Custodians    []domain.Custodian    `json:"custodians"`
+		CascadeStates []domain.CascadeState `json:"cascade_states"`
+	}
+
+	if len(holds) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"holds": []holdEnriched{}})
+		return
+	}
+
+	holdIDStrs := make([]string, len(holds))
+	var placedByStrs []string
+	seenUsers := map[uuid.UUID]bool{}
+	for i, h := range holds {
+		holdIDStrs[i] = h.ID.String()
+		if h.PlacedBy != nil && !seenUsers[*h.PlacedBy] {
+			placedByStrs = append(placedByStrs, h.PlacedBy.String())
+			seenUsers[*h.PlacedBy] = true
+		}
+	}
+
+	custByHold := map[uuid.UUID][]domain.Custodian{}
+	custRows, e := d.Pool.Query(r.Context(), `
+		SELECT id, hold_id, email, added_by, created_at
+		FROM legal_hold_custodians
+		WHERE hold_id = ANY($1::uuid[]) AND removed_at IS NULL
+		ORDER BY created_at ASC
+	`, holdIDStrs)
+	if e != nil {
+		d.Logger.Error("list holds: query custodians", zap.Error(e))
+	} else {
+		for custRows.Next() {
+			var c domain.Custodian
+			if err := custRows.Scan(&c.ID, &c.HoldID, &c.Email, &c.AddedBy, &c.CreatedAt); err != nil {
+				d.Logger.Warn("list holds: scan custodian", zap.Error(err))
+				continue
+			}
+			custByHold[c.HoldID] = append(custByHold[c.HoldID], c)
+		}
+		custRows.Close()
+		if err := custRows.Err(); err != nil {
+			d.Logger.Error("list holds: custodians rows", zap.Error(err))
+		}
+	}
+
+	cssByHold := map[uuid.UUID][]domain.CascadeState{}
+	csRows, e := d.Pool.Query(r.Context(), `
+		SELECT id, hold_id, custodian_email, instance_id, status, COALESCE(last_error, ''), attempts, completed_at, created_at, updated_at
+		FROM cascade_state WHERE hold_id = ANY($1::uuid[])
+	`, holdIDStrs)
+	if e != nil {
+		d.Logger.Error("list holds: query cascade states", zap.Error(e))
+	} else {
+		for csRows.Next() {
+			var cs domain.CascadeState
+			if err := csRows.Scan(&cs.ID, &cs.HoldID, &cs.CustodianEmail, &cs.InstanceID, &cs.Status, &cs.LastError, &cs.Attempts, &cs.CompletedAt, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+				d.Logger.Warn("list holds: scan cascade state", zap.Error(err))
+				continue
+			}
+			cssByHold[cs.HoldID] = append(cssByHold[cs.HoldID], cs)
+		}
+		csRows.Close()
+		if err := csRows.Err(); err != nil {
+			d.Logger.Error("list holds: cascade state rows", zap.Error(err))
+		}
+	}
+
+	userNames := map[string]string{}
+	if len(placedByStrs) > 0 {
+		uRows, e := d.Pool.Query(r.Context(), `
+			SELECT id, COALESCE(NULLIF(name, ''), email) FROM users WHERE id = ANY($1::uuid[])
+		`, placedByStrs)
+		if e != nil {
+			d.Logger.Error("list holds: query user names", zap.Error(e))
+		} else {
+			for uRows.Next() {
+				var id uuid.UUID
+				var name string
+				if err := uRows.Scan(&id, &name); err != nil {
+					d.Logger.Warn("list holds: scan user name", zap.Error(err))
+					continue
+				}
+				userNames[id.String()] = name
+			}
+			uRows.Close()
+			if err := uRows.Err(); err != nil {
+				d.Logger.Error("list holds: user names rows", zap.Error(err))
+			}
+		}
+	}
+
+	out := make([]holdEnriched, len(holds))
+	for i, h := range holds {
+		name := ""
+		if h.PlacedBy != nil {
+			name = userNames[h.PlacedBy.String()]
+		}
+		custodians := custByHold[h.ID]
+		if custodians == nil {
+			custodians = []domain.Custodian{}
+		}
+		css := cssByHold[h.ID]
+		if css == nil {
+			css = []domain.CascadeState{}
+		}
+		out[i] = holdEnriched{
+			Hold:          h,
+			PlacedByName:  name,
+			Custodians:    custodians,
+			CascadeStates: css,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"holds": out})
 }
 
-// GetHold returns a hold with its cascade state rows.
+// GetHold returns a hold with its custodians and cascade states.
 // GET /api/v1/internal/holds/:id
 func (d *Deps) GetHold(w http.ResponseWriter, r *http.Request, holdIDStr string) {
 	holdID, err := uuid.Parse(holdIDStr)
@@ -381,20 +617,65 @@ func (d *Deps) GetHold(w http.ResponseWriter, r *http.Request, holdIDStr string)
 		return
 	}
 
-	csRows, _ := d.Pool.Query(r.Context(), `
-		SELECT id, hold_id, custodian_email, instance_id, status, last_error, attempts, completed_at, created_at, updated_at
-		FROM cascade_state WHERE hold_id = $1 ORDER BY created_at ASC
+	placedByName := ""
+	if hold.PlacedBy != nil {
+		_ = d.Pool.QueryRow(r.Context(), `
+			SELECT COALESCE(NULLIF(name, ''), email) FROM users WHERE id = $1
+		`, *hold.PlacedBy).Scan(&placedByName)
+	}
+
+	custodians := []domain.Custodian{}
+	custRows, e := d.Pool.Query(r.Context(), `
+		SELECT id, hold_id, email, added_by, created_at
+		FROM legal_hold_custodians
+		WHERE hold_id = $1 AND removed_at IS NULL
+		ORDER BY created_at ASC
 	`, holdID)
-	var cascadeStates []domain.CascadeState
-	if csRows != nil {
-		defer csRows.Close()
-		for csRows.Next() {
-			var cs domain.CascadeState
-			_ = csRows.Scan(&cs.ID, &cs.HoldID, &cs.CustodianEmail, &cs.InstanceID, &cs.Status, &cs.LastError, &cs.Attempts, &cs.CompletedAt, &cs.CreatedAt, &cs.UpdatedAt)
-			cascadeStates = append(cascadeStates, cs)
+	if e != nil {
+		d.Logger.Error("get hold: query custodians", zap.Error(e))
+	} else {
+		for custRows.Next() {
+			var c domain.Custodian
+			if err := custRows.Scan(&c.ID, &c.HoldID, &c.Email, &c.AddedBy, &c.CreatedAt); err != nil {
+				d.Logger.Warn("get hold: scan custodian", zap.Error(err))
+				continue
+			}
+			custodians = append(custodians, c)
+		}
+		custRows.Close()
+		if err := custRows.Err(); err != nil {
+			d.Logger.Error("get hold: custodians rows", zap.Error(err))
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hold": hold, "cascade_state": cascadeStates})
+
+	cascadeStates := []domain.CascadeState{}
+	csRows, e := d.Pool.Query(r.Context(), `
+		SELECT id, hold_id, custodian_email, instance_id, status, COALESCE(last_error, ''), attempts, completed_at, created_at, updated_at
+		FROM cascade_state WHERE hold_id = $1 ORDER BY created_at ASC
+	`, holdID)
+	if e != nil {
+		d.Logger.Error("get hold: query cascade states", zap.Error(e))
+	} else {
+		for csRows.Next() {
+			var cs domain.CascadeState
+			if err := csRows.Scan(&cs.ID, &cs.HoldID, &cs.CustodianEmail, &cs.InstanceID, &cs.Status, &cs.LastError, &cs.Attempts, &cs.CompletedAt, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+				d.Logger.Warn("get hold: scan cascade state", zap.Error(err))
+				continue
+			}
+			cascadeStates = append(cascadeStates, cs)
+		}
+		csRows.Close()
+		if err := csRows.Err(); err != nil {
+			d.Logger.Error("get hold: cascade state rows", zap.Error(err))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"hold":           hold,
+		"placed_by_name": placedByName,
+		"custodians":     custodians,
+		"cascade_states": cascadeStates,
+	})
 }
 
 // AddCustodian adds a custodian to an active hold.
@@ -565,7 +846,7 @@ func (d *Deps) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	events := scanEvents(rows)
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	writeJSON(w, http.StatusOK, map[string]any{"events": enrichEventsWithActorNames(r.Context(), d.Pool, events)})
 }
 
 // ExportAuditEvents streams events as JSON or CSV.
@@ -676,14 +957,18 @@ func (d *Deps) decideApproval(w http.ResponseWriter, r *http.Request, approvalID
 		reviewerID = &u.ID
 	}
 
-	_, err = d.Pool.Exec(r.Context(), `
+	tag, err := d.Pool.Exec(r.Context(), `
 		UPDATE approval_requests
 		SET status = $2, reviewer_id = $3, review_note = $4, reviewed_at = now()
-		WHERE id = $1 AND status = 'pending'
+		WHERE id = $1 AND status = 'pending' AND requester_id != $3
 	`, approvalID, newStatus, reviewerID, body.Note)
 	if err != nil {
 		d.Logger.Error("decide approval", zap.String("status", newStatus), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusConflict, "approval not found, already decided, or self-approval not permitted")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": newStatus})
@@ -892,11 +1177,57 @@ func (d *Deps) RevokeToken(w http.ResponseWriter, r *http.Request, tokenIDStr st
 // Admin — instances
 // -----------------------------------------------------------------------
 
+// ListPlugins returns all registered plugins with their credential schemas.
+// GET /api/v1/internal/admin/plugins
+func (d *Deps) ListPlugins(w http.ResponseWriter, r *http.Request) {
+	type pluginInfo struct {
+		ID      string                   `json:"id"`
+		Name    string                   `json:"name"`
+		Schema  []domain.CredentialField `json:"schema"`
+		Loaded  bool                     `json:"loaded"`
+	}
+
+	// Determine which plugin IDs have at least one active instance.
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT DISTINCT plugin_id FROM integration_instances WHERE is_active = true
+	`)
+	if err != nil {
+		d.Logger.Error("list plugins: query instances", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rows.Close()
+	activeIDs := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			activeIDs[id] = true
+		}
+	}
+
+	loadedOnly := r.URL.Query().Get("loaded_only") == "true"
+	all := plugin.All()
+	result := make([]pluginInfo, 0, len(all))
+	for _, p := range all {
+		loaded := activeIDs[p.ID()]
+		if loadedOnly && !loaded {
+			continue
+		}
+		result = append(result, pluginInfo{
+			ID:     p.ID(),
+			Name:   p.Name(),
+			Schema: p.CredentialSchema(),
+			Loaded: loaded,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": result})
+}
+
 // ListInstances returns all integration instances.
 // GET /api/v1/internal/admin/instances
 func (d *Deps) ListInstances(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT id, name, plugin_id, is_active, last_health_ok, last_health_at, created_at
+		SELECT id, name, plugin_id, is_active, COALESCE(last_health_ok, false), last_health_at, created_at
 		FROM integration_instances ORDER BY name ASC
 	`)
 	if err != nil {
@@ -930,17 +1261,35 @@ func (d *Deps) ListInstances(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/internal/admin/instances
 func (d *Deps) CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     string `json:"name"`
-		PluginID string `json:"plugin_id"`
+		Name        string            `json:"name"`
+		PluginID    string            `json:"plugin_id"`
+		Credentials map[string]string `json:"credentials"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	var credsEnc []byte
+	if len(body.Credentials) > 0 && len(d.EncKey) == 32 {
+		credsJSON, err := json.Marshal(body.Credentials)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid credentials")
+			return
+		}
+		enc, err := crypto.Encrypt(d.EncKey, credsJSON)
+		if err != nil {
+			d.Logger.Error("create instance: encrypt credentials", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		credsEnc = enc
+	}
+
 	var id uuid.UUID
 	if err := d.Pool.QueryRow(r.Context(), `
-		INSERT INTO integration_instances (name, plugin_id) VALUES ($1, $2) RETURNING id
-	`, body.Name, body.PluginID).Scan(&id); err != nil {
+		INSERT INTO integration_instances (name, plugin_id, credentials_enc) VALUES ($1, $2, $3) RETURNING id
+	`, body.Name, body.PluginID, credsEnc).Scan(&id); err != nil {
 		d.Logger.Error("create instance", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -957,21 +1306,63 @@ func (d *Deps) UpdateInstance(w http.ResponseWriter, r *http.Request, instanceID
 		return
 	}
 	var body struct {
-		Name     string `json:"name"`
-		IsActive *bool  `json:"is_active"`
+		Name        string            `json:"name"`
+		IsActive    *bool             `json:"is_active"`
+		Credentials map[string]string `json:"credentials"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
-		UPDATE integration_instances
-		SET name = COALESCE(NULLIF($2, ''), name), is_active = COALESCE($3, is_active)
-		WHERE id = $1
-	`, instanceID, body.Name, body.IsActive); err != nil {
-		d.Logger.Error("update instance", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
+
+	if len(body.Credentials) > 0 && len(d.EncKey) == 32 {
+		// Merge into existing credentials so fields not included in the request
+		// (e.g. a secret the UI blanks out) are not wiped.
+		var existingEnc []byte
+		_ = d.Pool.QueryRow(r.Context(), `SELECT credentials_enc FROM integration_instances WHERE id = $1`, instanceID).Scan(&existingEnc)
+		merged := map[string]string{}
+		if len(existingEnc) > 0 {
+			if pt, err := crypto.Decrypt(d.EncKey, existingEnc); err == nil {
+				_ = json.Unmarshal(pt, &merged)
+			}
+		}
+		for k, v := range body.Credentials {
+			if v != "" {
+				merged[k] = v
+			}
+		}
+		credsJSON, err := json.Marshal(merged)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid credentials")
+			return
+		}
+		enc, err := crypto.Encrypt(d.EncKey, credsJSON)
+		if err != nil {
+			d.Logger.Error("update instance: encrypt credentials", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if _, err := d.Pool.Exec(r.Context(), `
+			UPDATE integration_instances
+			SET name = COALESCE(NULLIF($2, ''), name),
+			    is_active = COALESCE($3, is_active),
+			    credentials_enc = $4
+			WHERE id = $1
+		`, instanceID, body.Name, body.IsActive, enc); err != nil {
+			d.Logger.Error("update instance", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	} else {
+		if _, err := d.Pool.Exec(r.Context(), `
+			UPDATE integration_instances
+			SET name = COALESCE(NULLIF($2, ''), name), is_active = COALESCE($3, is_active)
+			WHERE id = $1
+		`, instanceID, body.Name, body.IsActive); err != nil {
+			d.Logger.Error("update instance", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
@@ -996,15 +1387,15 @@ func (d *Deps) DeleteInstance(w http.ResponseWriter, r *http.Request, instanceID
 // Admin — roles
 // -----------------------------------------------------------------------
 
-// ListRoles returns all roles with their permissions.
+// ListRoles returns all roles with their permissions and builtin flag.
 // GET /api/v1/internal/admin/roles
 func (d *Deps) ListRoles(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT r.id, r.name, r.description,
-		       array_agg(rp.permission) FILTER (WHERE rp.permission IS NOT NULL) AS permissions
+		SELECT r.id, r.name, r.description, r.is_builtin,
+		       array_agg(rp.permission ORDER BY rp.permission) FILTER (WHERE rp.permission IS NOT NULL) AS permissions
 		FROM roles r
 		LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		GROUP BY r.id, r.name, r.description ORDER BY r.name ASC
+		GROUP BY r.id, r.name, r.description, r.is_builtin ORDER BY r.name ASC
 	`)
 	if err != nil {
 		d.Logger.Error("list roles", zap.Error(err))
@@ -1017,17 +1408,208 @@ func (d *Deps) ListRoles(w http.ResponseWriter, r *http.Request) {
 		ID          uuid.UUID `json:"id"`
 		Name        string    `json:"name"`
 		Description string    `json:"description"`
+		IsBuiltin   bool      `json:"is_builtin"`
 		Permissions []string  `json:"permissions"`
 	}
 	var result []roleRow
 	for rows.Next() {
 		var row roleRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Description, &row.Permissions); err != nil {
+		if err := rows.Scan(&row.ID, &row.Name, &row.Description, &row.IsBuiltin, &row.Permissions); err != nil {
 			continue
+		}
+		if row.Permissions == nil {
+			row.Permissions = []string{}
 		}
 		result = append(result, row)
 	}
+	if result == nil {
+		result = []roleRow{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"roles": result})
+}
+
+// ListUsers returns all users with their assigned roles and origin.
+// GET /api/v1/internal/admin/users
+func (d *Deps) ListUsers(w http.ResponseWriter, r *http.Request) {
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT u.id, u.email, u.name, u.is_active, u.origin, u.created_at,
+		       array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL) AS roles
+		FROM users u
+		LEFT JOIN user_roles ur ON ur.user_id = u.id
+		LEFT JOIN roles r ON r.id = ur.role_id
+		GROUP BY u.id, u.email, u.name, u.is_active, u.origin, u.created_at
+		ORDER BY u.email ASC
+	`)
+	if err != nil {
+		d.Logger.Error("list users", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rows.Close()
+
+	type userRow struct {
+		ID        uuid.UUID `json:"id"`
+		Email     string    `json:"email"`
+		Name      string    `json:"name"`
+		IsActive  bool      `json:"is_active"`
+		Origin    string    `json:"origin"`
+		CreatedAt time.Time `json:"created_at"`
+		Roles     []string  `json:"roles"`
+	}
+	var result []userRow
+	for rows.Next() {
+		var u userRow
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.IsActive, &u.Origin, &u.CreatedAt, &u.Roles); err != nil {
+			continue
+		}
+		if u.Roles == nil {
+			u.Roles = []string{}
+		}
+		result = append(result, u)
+	}
+	if result == nil {
+		result = []userRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": result})
+}
+
+// ListPermissions returns all canonical permissions.
+// GET /api/v1/internal/admin/permissions
+func (d *Deps) ListPermissions(w http.ResponseWriter, r *http.Request) {
+	all := rbac.AllPermissions()
+	result := make([]string, len(all))
+	for i, p := range all {
+		result[i] = p.String()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": result})
+}
+
+// CreateRole creates a custom (non-builtin) role with optional permissions.
+// POST /api/v1/internal/admin/roles
+func (d *Deps) CreateRole(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	for _, perm := range body.Permissions {
+		if !rbac.IsKnown(rbac.Permission(perm)) {
+			writeError(w, http.StatusBadRequest, "unknown permission: "+perm)
+			return
+		}
+	}
+
+	tx, err := d.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	var roleID uuid.UUID
+	if err := tx.QueryRow(r.Context(), `
+		INSERT INTO roles (name, description, is_builtin) VALUES ($1, $2, false) RETURNING id
+	`, body.Name, body.Description).Scan(&roleID); err != nil {
+		d.Logger.Error("create role", zap.Error(err))
+		writeError(w, http.StatusConflict, "role name already exists")
+		return
+	}
+	for _, perm := range body.Permissions {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING
+		`, roleID, perm); err != nil {
+			d.Logger.Error("create role: insert permission", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": roleID.String()})
+}
+
+// UpdateRolePermissions replaces the permission set on a custom (non-builtin) role.
+// PUT /api/v1/internal/admin/roles/:name/permissions
+func (d *Deps) UpdateRolePermissions(w http.ResponseWriter, r *http.Request, roleName string) {
+	var body struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	for _, perm := range body.Permissions {
+		if !rbac.IsKnown(rbac.Permission(perm)) {
+			writeError(w, http.StatusBadRequest, "unknown permission: "+perm)
+			return
+		}
+	}
+
+	tx, err := d.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	var roleID uuid.UUID
+	var isBuiltin bool
+	if err := tx.QueryRow(r.Context(), `SELECT id, is_builtin FROM roles WHERE name = $1`, roleName).Scan(&roleID, &isBuiltin); err != nil {
+		writeError(w, http.StatusNotFound, "role not found")
+		return
+	}
+	if isBuiltin {
+		writeError(w, http.StatusForbidden, "cannot modify built-in role permissions")
+		return
+	}
+
+	if _, err := tx.Exec(r.Context(), `DELETE FROM role_permissions WHERE role_id = $1`, roleID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	for _, perm := range body.Permissions {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING
+		`, roleID, perm); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// DeleteRole deletes a custom (non-builtin) role.
+// DELETE /api/v1/internal/admin/roles/:name
+func (d *Deps) DeleteRole(w http.ResponseWriter, r *http.Request, roleName string) {
+	var isBuiltin bool
+	if err := d.Pool.QueryRow(r.Context(), `SELECT is_builtin FROM roles WHERE name = $1`, roleName).Scan(&isBuiltin); err != nil {
+		writeError(w, http.StatusNotFound, "role not found")
+		return
+	}
+	if isBuiltin {
+		writeError(w, http.StatusForbidden, "cannot delete built-in role")
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM roles WHERE name = $1 AND is_builtin = false`, roleName); err != nil {
+		d.Logger.Error("delete role", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // AssignRole grants a role to a user.
@@ -1166,7 +1748,13 @@ func (d *Deps) ListHoldTemplates(w http.ResponseWriter, r *http.Request) {
 // CreateHoldTemplate creates a hold template.
 // POST /api/v1/internal/admin/hold-templates
 func (d *Deps) CreateHoldTemplate(w http.ResponseWriter, r *http.Request) {
-	var body legalhold.CreateTemplateParams
+	var body struct {
+		Name           string `json:"name"`
+		Description    string `json:"description"`
+		ProviderGlob   string `json:"provider_glob"`
+		ExpirationDays *int   `json:"expiration_days"`
+		IsDefault      bool   `json:"is_default"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1181,13 +1769,22 @@ func (d *Deps) CreateHoldTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	tpl, err := d.HoldSvc.CreateTemplate(r.Context(), tx, actor, body)
+	tpl, err := d.HoldSvc.CreateTemplate(r.Context(), tx, actor, legalhold.CreateTemplateParams{
+		Name:           body.Name,
+		Description:    body.Description,
+		ProviderGlob:   body.ProviderGlob,
+		ExpirationDays: body.ExpirationDays,
+		IsDefault:      body.IsDefault,
+	})
 	if err != nil {
 		d.Logger.Error("create hold template", zap.Error(err))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_ = tx.Commit(r.Context())
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"template": tpl})
 }
 
@@ -1199,7 +1796,13 @@ func (d *Deps) UpdateHoldTemplate(w http.ResponseWriter, r *http.Request, templa
 		writeError(w, http.StatusBadRequest, "invalid template id")
 		return
 	}
-	var body legalhold.UpdateTemplateParams
+	var body struct {
+		Name           string `json:"name"`
+		Description    string `json:"description"`
+		ProviderGlob   string `json:"provider_glob"`
+		ExpirationDays *int   `json:"expiration_days"`
+		IsDefault      bool   `json:"is_default"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1214,13 +1817,22 @@ func (d *Deps) UpdateHoldTemplate(w http.ResponseWriter, r *http.Request, templa
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	tpl, err := d.HoldSvc.UpdateTemplate(r.Context(), tx, actor, templateID, body)
+	tpl, err := d.HoldSvc.UpdateTemplate(r.Context(), tx, actor, templateID, legalhold.UpdateTemplateParams{
+		Name:           body.Name,
+		Description:    body.Description,
+		ProviderGlob:   body.ProviderGlob,
+		ExpirationDays: body.ExpirationDays,
+		IsDefault:      body.IsDefault,
+	})
 	if err != nil {
 		d.Logger.Error("update hold template", zap.Error(err))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_ = tx.Commit(r.Context())
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"template": tpl})
 }
 
@@ -1247,7 +1859,322 @@ func (d *Deps) DeleteHoldTemplate(w http.ResponseWriter, r *http.Request, templa
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_ = tx.Commit(r.Context())
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// -----------------------------------------------------------------------
+// Admin — SCIM groups
+// -----------------------------------------------------------------------
+
+// ListSCIMGroups returns all SCIM groups with their bound role, if any.
+// GET /api/v1/internal/admin/scim-groups
+func (d *Deps) ListSCIMGroups(w http.ResponseWriter, r *http.Request) {
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT g.id, g.external_id, g.name, g.role_id, r.name, g.created_at, g.updated_at
+		FROM scim_groups g
+		LEFT JOIN roles r ON r.id = g.role_id
+		ORDER BY g.name ASC
+	`)
+	if err != nil {
+		d.Logger.Error("list scim groups", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rows.Close()
+
+	type groupRow struct {
+		ID         uuid.UUID  `json:"id"`
+		ExternalID string     `json:"external_id"`
+		Name       string     `json:"name"`
+		RoleID     *uuid.UUID `json:"role_id,omitempty"`
+		RoleName   *string    `json:"role_name,omitempty"`
+		CreatedAt  time.Time  `json:"created_at"`
+		UpdatedAt  time.Time  `json:"updated_at"`
+	}
+	var result []groupRow
+	for rows.Next() {
+		var g groupRow
+		if err := rows.Scan(&g.ID, &g.ExternalID, &g.Name, &g.RoleID, &g.RoleName, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			continue
+		}
+		result = append(result, g)
+	}
+	if result == nil {
+		result = []groupRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": result})
+}
+
+// UpdateSCIMGroupRole sets or clears the role binding for a SCIM group.
+// PUT /api/v1/internal/admin/scim-groups/:id/role
+func (d *Deps) UpdateSCIMGroupRole(w http.ResponseWriter, r *http.Request, groupIDStr string) {
+	groupID, err := uuid.Parse(groupIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid group id")
+		return
+	}
+	var body struct {
+		RoleID *string `json:"role_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var roleID *uuid.UUID
+	if body.RoleID != nil && *body.RoleID != "" {
+		rid, err := uuid.Parse(*body.RoleID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid role_id")
+			return
+		}
+		roleID = &rid
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE scim_groups SET role_id = $2, updated_at = now() WHERE id = $1
+	`, groupID, roleID); err != nil {
+		d.Logger.Error("update scim group role", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// -----------------------------------------------------------------------
+// Admin — SSO config
+// -----------------------------------------------------------------------
+
+// GetSSOConfig returns the SSO configuration. The client secret is never
+// returned; only a has_secret boolean is included.
+// GET /api/v1/internal/admin/sso-config
+func (d *Deps) GetSSOConfig(w http.ResponseWriter, r *http.Request) {
+	var (
+		issuer         string
+		internalIssuer string
+		clientID       string
+		credsEnc       []byte
+		redirectURL    string
+		ssoEnabled     bool
+		enforceSSO     bool
+		updatedAt      time.Time
+	)
+	err := d.Pool.QueryRow(r.Context(), `
+		SELECT oidc_issuer, oidc_internal_issuer, oidc_client_id,
+		       oidc_credentials_enc, oidc_redirect_url, sso_enabled, enforce_sso, updated_at
+		FROM sso_config WHERE singleton = true
+	`).Scan(&issuer, &internalIssuer, &clientID, &credsEnc, &redirectURL, &ssoEnabled, &enforceSSO, &updatedAt)
+	if err != nil {
+		d.Logger.Error("get sso config", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"oidc_issuer":          issuer,
+		"oidc_internal_issuer": internalIssuer,
+		"oidc_client_id":       clientID,
+		"has_secret":           len(credsEnc) > 0,
+		"oidc_redirect_url":    redirectURL,
+		"sso_enabled":          ssoEnabled,
+		"enforce_sso":          enforceSSO,
+		"updated_at":           updatedAt,
+	})
+}
+
+// UpdateSSOConfig saves SSO configuration. The client secret is only updated
+// when a non-empty value is provided; omitting it leaves the stored secret untouched.
+// PUT /api/v1/internal/admin/sso-config
+func (d *Deps) UpdateSSOConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OIDCIssuer         string `json:"oidc_issuer"`
+		OIDCInternalIssuer string `json:"oidc_internal_issuer"`
+		OIDCClientID       string `json:"oidc_client_id"`
+		OIDCClientSecret   string `json:"oidc_client_secret"`
+		OIDCRedirectURL    string `json:"oidc_redirect_url"`
+		SSOEnabled         bool   `json:"sso_enabled"`
+		EnforceSSO         bool   `json:"enforce_sso"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if body.OIDCClientSecret != "" {
+		var credsEnc []byte
+		if len(d.EncKey) == 32 {
+			enc, err := crypto.Encrypt(d.EncKey, []byte(body.OIDCClientSecret))
+			if err != nil {
+				d.Logger.Error("update sso config: encrypt secret", zap.Error(err))
+				writeError(w, http.StatusInternalServerError, "internal server error")
+				return
+			}
+			credsEnc = enc
+		}
+		if _, err := d.Pool.Exec(r.Context(), `
+			UPDATE sso_config
+			SET oidc_issuer = $1, oidc_internal_issuer = $2, oidc_client_id = $3,
+			    oidc_credentials_enc = $4, oidc_redirect_url = $5,
+			    sso_enabled = $6, enforce_sso = $7, updated_at = now()
+			WHERE singleton = true
+		`, body.OIDCIssuer, body.OIDCInternalIssuer, body.OIDCClientID, credsEnc, body.OIDCRedirectURL,
+			body.SSOEnabled, body.EnforceSSO); err != nil {
+			d.Logger.Error("update sso config", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	} else {
+		if _, err := d.Pool.Exec(r.Context(), `
+			UPDATE sso_config
+			SET oidc_issuer = $1, oidc_internal_issuer = $2, oidc_client_id = $3,
+			    oidc_redirect_url = $4, sso_enabled = $5, enforce_sso = $6, updated_at = now()
+			WHERE singleton = true
+		`, body.OIDCIssuer, body.OIDCInternalIssuer, body.OIDCClientID, body.OIDCRedirectURL,
+			body.SSOEnabled, body.EnforceSSO); err != nil {
+			d.Logger.Error("update sso config", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// SetUserPassword bcrypt-hashes and stores a password for a user (admin only).
+// PUT /api/v1/internal/admin/users/:id/password
+func (d *Deps) SetUserPassword(w http.ResponseWriter, r *http.Request, userIDStr string) {
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Password == "" {
+		writeError(w, http.StatusBadRequest, "password required")
+		return
+	}
+	hash, err := HashPassword(body.Password)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tag, err := d.Pool.Exec(r.Context(), `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
+	if err != nil || tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// -----------------------------------------------------------------------
+// Admin — Magic link invitations
+// -----------------------------------------------------------------------
+
+// ListInvitations returns all magic links.
+// GET /api/v1/internal/admin/invitations
+func (d *Deps) ListInvitations(w http.ResponseWriter, r *http.Request) {
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT m.id, m.token, m.email, m.role_name, m.label, m.used_at, m.expires_at, m.created_at,
+		       u.email AS invited_by_email
+		FROM magic_links m
+		LEFT JOIN users u ON u.id = m.invited_by
+		ORDER BY m.created_at DESC
+	`)
+	if err != nil {
+		d.Logger.Error("list invitations", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rows.Close()
+
+	type invRow struct {
+		ID             uuid.UUID  `json:"id"`
+		Token          string     `json:"token"`
+		Email          string     `json:"email"`
+		RoleName       *string    `json:"role_name,omitempty"`
+		Label          string     `json:"label"`
+		UsedAt         *time.Time `json:"used_at,omitempty"`
+		ExpiresAt      time.Time  `json:"expires_at"`
+		CreatedAt      time.Time  `json:"created_at"`
+		InvitedByEmail *string    `json:"invited_by_email,omitempty"`
+	}
+	var result []invRow
+	for rows.Next() {
+		var row invRow
+		if err := rows.Scan(&row.ID, &row.Token, &row.Email, &row.RoleName, &row.Label,
+			&row.UsedAt, &row.ExpiresAt, &row.CreatedAt, &row.InvitedByEmail); err != nil {
+			continue
+		}
+		result = append(result, row)
+	}
+	if result == nil {
+		result = []invRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": result})
+}
+
+// CreateInvitation generates a magic link invitation for an email address.
+// POST /api/v1/internal/admin/invitations
+func (d *Deps) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		RoleName string `json:"role_name"`
+		Label    string `json:"label"`
+		ExpiryH  int    `json:"expiry_hours"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "email required")
+		return
+	}
+	if body.ExpiryH <= 0 {
+		body.ExpiryH = 7 * 24
+	}
+
+	var invitedBy *uuid.UUID
+	if u, ok := middleware.UserFromCtx(r.Context()); ok {
+		invitedBy = &u.ID
+	}
+
+	var roleNameArg *string
+	if body.RoleName != "" {
+		roleNameArg = &body.RoleName
+	}
+
+	var id uuid.UUID
+	var token string
+	err := d.Pool.QueryRow(r.Context(), `
+		INSERT INTO magic_links (email, role_name, label, invited_by, expires_at)
+		VALUES ($1, $2, $3, $4, now() + ($5::int * interval '1 hour'))
+		RETURNING id, token
+	`, email, roleNameArg, body.Label, invitedBy, body.ExpiryH).Scan(&id, &token)
+	if err != nil {
+		d.Logger.Error("create invitation", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id.String(), "token": token})
+}
+
+// DeleteInvitation deletes a magic link by ID.
+// DELETE /api/v1/internal/admin/invitations/:id
+func (d *Deps) DeleteInvitation(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM magic_links WHERE id = $1`, id); err != nil {
+		d.Logger.Error("delete invitation", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -1424,6 +2351,53 @@ func scanOneEvent(r rowScanner) (domain.Event, bool) {
 		_ = json.Unmarshal(payloadBytes, &e.Payload)
 	}
 	return e, true
+}
+
+type enrichedEvent struct {
+	domain.Event
+	ActorDisplay string `json:"actor_display,omitempty"`
+}
+
+func enrichEventsWithActorNames(ctx context.Context, pool *pgxpool.Pool, events []domain.Event) []enrichedEvent {
+	out := make([]enrichedEvent, len(events))
+	for i, e := range events {
+		out[i] = enrichedEvent{Event: e}
+	}
+
+	// Collect unique actor UUIDs.
+	seen := map[uuid.UUID]bool{}
+	var ids []string
+	for _, e := range events {
+		if e.ActorID != nil && !seen[*e.ActorID] {
+			seen[*e.ActorID] = true
+			ids = append(ids, e.ActorID.String())
+		}
+	}
+	if len(ids) == 0 {
+		return out
+	}
+
+	names := map[uuid.UUID]string{}
+	rows, err := pool.Query(ctx, `
+		SELECT id, COALESCE(NULLIF(name, ''), email) FROM users WHERE id = ANY($1::uuid[])
+	`, ids)
+	if err == nil {
+		for rows.Next() {
+			var id uuid.UUID
+			var name string
+			if rows.Scan(&id, &name) == nil {
+				names[id] = name
+			}
+		}
+		rows.Close()
+	}
+
+	for i, e := range events {
+		if e.ActorID != nil {
+			out[i].ActorDisplay = names[*e.ActorID]
+		}
+	}
+	return out
 }
 
 func nilIfEmpty(b json.RawMessage) any {

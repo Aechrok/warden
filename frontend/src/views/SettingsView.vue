@@ -21,11 +21,15 @@
     </div>
 
     <!-- Tab content -->
-    <RolesTab v-if="activeTab === 'roles'" />
+    <UsersTab v-if="activeTab === 'users'" />
+    <SCIMGroupsTab v-else-if="activeTab === 'groups'" />
+    <RolesTab v-else-if="activeTab === 'roles'" />
     <InstancesTab v-else-if="activeTab === 'instances'" />
     <PBACTab v-else-if="activeTab === 'pbac'" />
     <HoldTemplatesTab v-else-if="activeTab === 'hold-templates'" />
     <VIPTab v-else-if="activeTab === 'vip'" />
+    <SSOTab v-else-if="activeTab === 'sso'" />
+    <InvitationsTab v-else-if="activeTab === 'invitations'" />
     <TokensTab v-else-if="activeTab === 'tokens'" />
   </div>
 </template>
@@ -33,15 +37,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import UsersTab from '../components/settings/UsersTab.vue'
+import SCIMGroupsTab from '../components/settings/SCIMGroupsTab.vue'
 import RolesTab from '../components/settings/RolesTab.vue'
 import InstancesTab from '../components/settings/InstancesTab.vue'
 import PBACTab from '../components/settings/PBACTab.vue'
 import HoldTemplatesTab from '../components/settings/HoldTemplatesTab.vue'
 import VIPTab from '../components/settings/VIPTab.vue'
+import SSOTab from '../components/settings/SSOTab.vue'
+import InvitationsTab from '../components/settings/InvitationsTab.vue'
 import TokensTab from '../components/settings/TokensTab.vue'
 
 const authStore = useAuthStore()
-const activeTab = ref('tokens')
+const activeTab = ref('users')
 
 interface Tab {
   key: string
@@ -50,12 +58,16 @@ interface Tab {
 }
 
 const allTabs: Tab[] = [
-  { key: 'tokens', label: 'API Tokens' },
-  { key: 'roles', label: 'Roles', permission: 'roles:write' },
+  { key: 'users', label: 'Users', permission: 'users:read' },
+  { key: 'groups', label: 'Groups', permission: 'roles:read' },
+  { key: 'roles', label: 'Roles', permission: 'roles:read' },
   { key: 'instances', label: 'Instances', permission: 'instances:write' },
   { key: 'pbac', label: 'PBAC Policies', permission: 'pbac_policies:write' },
   { key: 'hold-templates', label: 'Hold Templates', permission: 'hold_templates:write' },
   { key: 'vip', label: 'VIP Identities', permission: 'vip_identities:write' },
+  { key: 'sso', label: 'SSO & SCIM', permission: 'instances:write' },
+  { key: 'invitations', label: 'Invitations', permission: 'users:write' },
+  { key: 'tokens', label: 'API Tokens' },
 ]
 
 const availableTabs = computed(() =>

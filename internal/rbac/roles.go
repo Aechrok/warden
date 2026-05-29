@@ -142,10 +142,11 @@ func (s *Seeder) Seed(ctx context.Context, pool *pgxpool.Pool) error {
 func seedRole(ctx context.Context, tx pgx.Tx, r BuiltinRole) error {
 	var roleID string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO roles (name, description)
-		VALUES ($1, $2)
+		INSERT INTO roles (name, description, is_builtin)
+		VALUES ($1, $2, true)
 		ON CONFLICT (name) DO UPDATE
-		  SET description = EXCLUDED.description
+		  SET description = EXCLUDED.description,
+		      is_builtin  = true
 		RETURNING id::text
 	`, r.Name, r.Description).Scan(&roleID)
 	if err != nil {

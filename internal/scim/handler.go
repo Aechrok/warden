@@ -181,11 +181,12 @@ func (h *UserHandler) Create(ctx context.Context, in User) (*User, error) {
 		updatedAt time.Time
 	)
 	err := h.Pool.QueryRow(ctx, `
-		INSERT INTO users (email, name, is_active)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (email, name, is_active, origin)
+		VALUES ($1, $2, $3, 'scim')
 		ON CONFLICT (email) DO UPDATE
 		  SET name       = EXCLUDED.name,
 		      is_active  = EXCLUDED.is_active,
+		      origin     = 'scim',
 		      updated_at = now()
 		RETURNING id, email, name, is_active, created_at, updated_at
 	`, email, name, in.Active).Scan(&id, &dbEmail, &dbName, &isActive, &createdAt, &updatedAt)

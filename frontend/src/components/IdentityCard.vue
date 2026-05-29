@@ -9,16 +9,14 @@
           <span class="font-semibold text-sm" style="color: var(--text-primary);">
             {{ identity.display_name || identity.email }}
           </span>
-          <StatusBadge :status="identity.status" />
           <span
             class="text-xs px-2 py-0.5 rounded-full"
             style="background: var(--nav-active-bg); color: var(--nav-active-text);"
           >
-            {{ identity.provider }}
+            {{ identity.instance_name }}
           </span>
         </div>
         <div class="text-xs mt-1" style="color: var(--text-muted);">{{ identity.email }}</div>
-        <div class="text-xs" style="color: var(--text-muted);">Instance: {{ identity.instance_id }}</div>
       </div>
 
       <button
@@ -82,7 +80,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { Identity, ActionDef } from '../api/types'
-import StatusBadge from './StatusBadge.vue'
 import ActionPanel from './ActionPanel.vue'
 
 const props = defineProps<{
